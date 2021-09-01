@@ -9,7 +9,11 @@
 #include "config.h"
 #include <string.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <errno.h>
+#ifdef HAVE_IFADDRS_H
+#include <ifaddrs.h>
+#endif
 #include "options.h"
 #include "query.h"
 #include "tsig.h"
@@ -17,7 +21,6 @@
 #include "rrl.h"
 #include "bitset.h"
 
-#include "configyyrename.h"
 #include "configparser.h"
 config_parser_state_type* cfg_parser = 0;
 extern FILE* c_in, *c_out;
@@ -49,6 +52,7 @@ nsd_options_create(region_type* region)
 	opt->zonestatnames = rbtree_create(opt->region, rbtree_strcmp);
 	opt->patterns = rbtree_create(region, rbtree_strcmp);
 	opt->keys = rbtree_create(region, rbtree_strcmp);
+	opt->tls_auths = rbtree_create(region, rbtree_strcmp);
 	opt->ip_addresses = NULL;
 	opt->ip_transparent = 0;
 	opt->ip_freebind = 0;
@@ -126,6 +130,10 @@ nsd_options_create(region_type* region)
 	opt->tls_service_ocsp = NULL;
 	opt->tls_service_pem = NULL;
 	opt->tls_port = TLS_PORT;
+	opt->tls_cert_bundle = NULL;
+	opt->answer_cookie = 1;
+	opt->cookie_secret = NULL;
+	opt->cookie_secret_file = CONFIGDIR"/nsd_cookiesecrets.txt";
 	opt->control_enable = 0;
 	opt->control_interface = NULL;
 	opt->control_port = NSD_CONTROL_PORT;
@@ -171,6 +179,20 @@ nsd_options_insert_pattern(struct nsd_options* opt,
 	return 1;
 }
 
+void
+warn_if_directory(const char* filetype, FILE* f, const char* fname)
+{
+	if(fileno(f) != -1) {
+		struct stat st;
+		memset(&st, 0, sizeof(st));
+		if(fstat(fileno(f), &st) != -1) {
+			if(S_ISDIR(st.st_mode)) {
+				log_msg(LOG_WARNING, "trying to read %s but it is a directory: %s", filetype, fname);
+			}
+		}
+	}
+}
+
 int
 parse_options_file(struct nsd_options* opt, const char* file,
 	void (*err)(void*,const char*), void* err_arg)
@@ -193,6 +215,7 @@ parse_options_file(struct nsd_options* opt, const char* file,
 	cfg_parser->pattern = NULL;
 	cfg_parser->zone = NULL;
 	cfg_parser->key = NULL;
+	cfg_parser->tls_auth = NULL;
 
 	in = fopen(cfg_parser->filename, "r");
 	if(!in) {
@@ -207,6 +230,7 @@ parse_options_file(struct nsd_options* opt, const char* file,
 		}
 		return 0;
 	}
+	warn_if_directory("configfile", in, file);
 	c_in = in;
 	c_parse();
 	fclose(in);
@@ -236,6 +260,14 @@ parse_options_file(struct nsd_options* opt, const char* file,
 		}
 		for(acl=pat->request_xfr; acl; acl=acl->next)
 		{
+			/* Find tls_auth */
+			if (!acl->tls_auth_name)
+				; /* pass */
+			else if (!(acl->tls_auth_options =
+			                tls_auth_options_find(opt, acl->tls_auth_name)))
+				c_error("tls_auth %s in pattern %s could not be found",
+						acl->tls_auth_name, pat->pname);
+			/* Find key */
 			if(acl->nokey || acl->blocked)
 				continue;
 			acl->key_options = key_options_find(opt, acl->key_name);
@@ -244,6 +276,15 @@ parse_options_file(struct nsd_options* opt, const char* file,
 					acl->key_name, pat->pname);
 		}
 		for(acl=pat->provide_xfr; acl; acl=acl->next)
+		{
+			if(acl->nokey || acl->blocked)
+				continue;
+			acl->key_options = key_options_find(opt, acl->key_name);
+			if(!acl->key_options)
+				c_error("key %s in pattern %s could not be found",
+					acl->key_name, pat->pname);
+		}
+		for(acl=pat->allow_query; acl; acl=acl->next)
 		{
 			if(acl->nokey || acl->blocked)
 				continue;
@@ -765,6 +806,16 @@ zone_options_create(region_type* region)
 /* true is booleans are the same truth value */
 #define booleq(x,y) ( ((x) && (y)) || (!(x) && !(y)) )
 
+/* true is min_expire_time_expr has either an equal known value
+ * or none of these known values but booleanally equal
+ */
+#define expire_expr_eq(x,y) (  (  (x) == REFRESHPLUSRETRYPLUS1 \
+                               && (y) == REFRESHPLUSRETRYPLUS1 ) \
+                            || (  (x) != REFRESHPLUSRETRYPLUS1 \
+                               && (y) != REFRESHPLUSRETRYPLUS1 \
+                               && booleq((x), (y))))
+
+
 int
 acl_equal(struct acl_options* p, struct acl_options* q)
 {
@@ -779,6 +830,11 @@ acl_equal(struct acl_options* p, struct acl_options* q)
 	} else if(p->key_name && !q->key_name) return 0;
 	else if(!p->key_name && q->key_name) return 0;
 	/* key_options is derived from key_name */
+	if(p->tls_auth_name && q->tls_auth_name) {
+		if(strcmp(p->tls_auth_name, q->tls_auth_name)!=0) return 0;
+	} else if(p->tls_auth_name && !q->tls_auth_name) return 0;
+	else if(!p->tls_auth_name && q->tls_auth_name) return 0;
+	/* tls_auth_options is derived from tls_auth_name */
 	return 1;
 }
 
@@ -812,6 +868,7 @@ pattern_options_create(region_type* region)
 	p->size_limit_xfr = 0;
 	p->notify = 0;
 	p->provide_xfr = 0;
+	p->allow_query = 0;
 	p->outgoing_interface = 0;
 	p->notify_retry = 5;
 	p->notify_retry_is_default = 1;
@@ -827,6 +884,8 @@ pattern_options_create(region_type* region)
 	p->max_retry_time_is_default = 1;
 	p->min_retry_time = 0;
 	p->min_retry_time_is_default = 1;
+	p->min_expire_time = 0;
+	p->min_expire_time_expr = EXPIRE_TIME_IS_DEFAULT;
 #ifdef RATELIMIT
 	p->rrl_whitelist = 0;
 #endif
@@ -852,6 +911,9 @@ acl_delete(region_type* region, struct acl_options* acl)
 	if(acl->key_name)
 		region_recycle(region, (void*)acl->key_name,
 			strlen(acl->key_name)+1);
+	if(acl->tls_auth_name)
+		region_recycle(region, (void*)acl->tls_auth_name,
+			strlen(acl->tls_auth_name)+1);
 	/* key_options is a convenience pointer, not owned by the acl */
 	region_recycle(region, acl, sizeof(*acl));
 }
@@ -899,6 +961,7 @@ pattern_options_remove(struct nsd_options* opt, const char* name)
 	acl_list_delete(opt->region, p->request_xfr);
 	acl_list_delete(opt->region, p->notify);
 	acl_list_delete(opt->region, p->provide_xfr);
+	acl_list_delete(opt->region, p->allow_query);
 	acl_list_delete(opt->region, p->outgoing_interface);
 	verifier_delete(opt->region, p->verifier);
 
@@ -918,8 +981,11 @@ copy_acl(region_type* region, struct acl_options* a)
 		b->ip_address_spec = region_strdup(region, a->ip_address_spec);
 	if(a->key_name)
 		b->key_name = region_strdup(region, a->key_name);
+	if(a->tls_auth_name)
+		b->tls_auth_name = region_strdup(region, a->tls_auth_name);
 	b->next = NULL;
 	b->key_options = NULL;
+	b->tls_auth_options = NULL;
 	return b;
 }
 
@@ -933,6 +999,10 @@ copy_acl_list(struct nsd_options* opt, struct acl_options* a)
 		if(b->key_name)
 			b->key_options = key_options_find(opt, b->key_name);
 		else	b->key_options = NULL;
+		/* fixup tls_auth_options */
+		if(b->tls_auth_name)
+			b->tls_auth_options = tls_auth_options_find(opt, b->tls_auth_name);
+		else	b->tls_auth_options = NULL;
 
 		/* link as last into list */
 		b->next = NULL;
@@ -1010,6 +1080,8 @@ copy_pat_fixed(region_type* region, struct pattern_options* orig,
 	orig->max_retry_time_is_default = p->max_retry_time_is_default;
 	orig->min_retry_time = p->min_retry_time;
 	orig->min_retry_time_is_default = p->min_retry_time_is_default;
+	orig->min_expire_time = p->min_expire_time;
+	orig->min_expire_time_expr = p->min_expire_time_expr;
 #ifdef RATELIMIT
 	orig->rrl_whitelist = p->rrl_whitelist;
 #endif
@@ -1035,6 +1107,7 @@ pattern_options_add_modify(struct nsd_options* opt, struct pattern_options* p)
 		orig->request_xfr = copy_acl_list(opt, p->request_xfr);
 		orig->notify = copy_acl_list(opt, p->notify);
 		orig->provide_xfr = copy_acl_list(opt, p->provide_xfr);
+		orig->allow_query = copy_acl_list(opt, p->allow_query);
 		orig->outgoing_interface = copy_acl_list(opt,
 			p->outgoing_interface);
 		copy_changed_verifier(opt, &orig->verifier, p->verifier);
@@ -1053,6 +1126,7 @@ pattern_options_add_modify(struct nsd_options* opt, struct pattern_options* p)
 		copy_changed_acl(opt, &orig->request_xfr, p->request_xfr);
 		copy_changed_acl(opt, &orig->notify, p->notify);
 		copy_changed_acl(opt, &orig->provide_xfr, p->provide_xfr);
+		copy_changed_acl(opt, &orig->allow_query, p->allow_query);
 		copy_changed_acl(opt, &orig->outgoing_interface,
 			p->outgoing_interface);
 		copy_changed_verifier(opt, &orig->verifier, p->verifier);
@@ -1110,6 +1184,7 @@ pattern_options_equal(struct pattern_options* p, struct pattern_options* q)
 	if(!acl_list_equal(p->request_xfr, q->request_xfr)) return 0;
 	if(!acl_list_equal(p->notify, q->notify)) return 0;
 	if(!acl_list_equal(p->provide_xfr, q->provide_xfr)) return 0;
+	if(!acl_list_equal(p->allow_query, q->allow_query)) return 0;
 	if(!acl_list_equal(p->outgoing_interface, q->outgoing_interface))
 		return 0;
 	if(p->max_refresh_time != q->max_refresh_time) return 0;
@@ -1124,6 +1199,9 @@ pattern_options_equal(struct pattern_options* p, struct pattern_options* q)
 	if(p->min_retry_time != q->min_retry_time) return 0;
 	if(!booleq(p->min_retry_time_is_default,
 		q->min_retry_time_is_default)) return 0;
+	if(p->min_expire_time != q->min_expire_time) return 0;
+	if(!expire_expr_eq(p->min_expire_time_expr,
+		q->min_expire_time_expr)) return 0;
 #ifdef RATELIMIT
 	if(p->rrl_whitelist != q->rrl_whitelist) return 0;
 #endif
@@ -1230,6 +1308,7 @@ marshal_acl(struct buffer* b, struct acl_options* acl)
 	buffer_write(b, acl, sizeof(*acl));
 	marshal_str(b, acl->ip_address_spec);
 	marshal_str(b, acl->key_name);
+	marshal_str(b, acl->tls_auth_name);
 }
 
 static struct acl_options*
@@ -1240,8 +1319,10 @@ unmarshal_acl(region_type* r, struct buffer* b)
 	buffer_read(b, acl, sizeof(*acl));
 	acl->next = NULL;
 	acl->key_options = NULL;
+	acl->tls_auth_options = NULL;
 	acl->ip_address_spec = unmarshal_str(r, b);
 	acl->key_name = unmarshal_str(r, b);
+	acl->tls_auth_name = unmarshal_str(r, b);
 	return acl;
 }
 
@@ -1333,6 +1414,7 @@ pattern_options_marshal(struct buffer* b, struct pattern_options* p)
 	marshal_acl_list(b, p->request_xfr);
 	marshal_acl_list(b, p->notify);
 	marshal_acl_list(b, p->provide_xfr);
+	marshal_acl_list(b, p->allow_query);
 	marshal_acl_list(b, p->outgoing_interface);
 	marshal_u32(b, p->max_refresh_time);
 	marshal_u8(b, p->max_refresh_time_is_default);
@@ -1342,6 +1424,8 @@ pattern_options_marshal(struct buffer* b, struct pattern_options* p)
 	marshal_u8(b, p->max_retry_time_is_default);
 	marshal_u32(b, p->min_retry_time);
 	marshal_u8(b, p->min_retry_time_is_default);
+	marshal_u32(b, p->min_expire_time);
+	marshal_u8(b, p->min_expire_time_expr);
 	marshal_u8(b, p->multi_master_check);
 	marshal_u8(b, p->verify_zone);
 	marshal_u8(b, p->verify_zone_is_default);
@@ -1372,6 +1456,7 @@ pattern_options_unmarshal(region_type* r, struct buffer* b)
 	p->request_xfr = unmarshal_acl_list(r, b);
 	p->notify = unmarshal_acl_list(r, b);
 	p->provide_xfr = unmarshal_acl_list(r, b);
+	p->allow_query = unmarshal_acl_list(r, b);
 	p->outgoing_interface = unmarshal_acl_list(r, b);
 	p->max_refresh_time = unmarshal_u32(b);
 	p->max_refresh_time_is_default = unmarshal_u8(b);
@@ -1381,6 +1466,8 @@ pattern_options_unmarshal(region_type* r, struct buffer* b)
 	p->max_retry_time_is_default = unmarshal_u8(b);
 	p->min_retry_time = unmarshal_u32(b);
 	p->min_retry_time_is_default = unmarshal_u8(b);
+	p->min_expire_time = unmarshal_u32(b);
+	p->min_expire_time_expr = unmarshal_u8(b);
 	p->multi_master_check = unmarshal_u8(b);
 	p->verify_zone = unmarshal_u8(b);
 	p->verify_zone_is_default = unmarshal_u8(b);
@@ -1401,6 +1488,14 @@ key_options_create(region_type* region)
 	return key;
 }
 
+struct tls_auth_options*
+tls_auth_options_create(region_type* region)
+{
+	struct tls_auth_options* tls_auth_options;
+	tls_auth_options = (struct tls_auth_options*)region_alloc_zero(region, sizeof(struct tls_auth_options));
+	return tls_auth_options;
+}
+
 void
 key_options_insert(struct nsd_options* opt, struct key_options* key)
 {
@@ -1413,6 +1508,20 @@ struct key_options*
 key_options_find(struct nsd_options* opt, const char* name)
 {
 	return (struct key_options*)rbtree_search(opt->keys, name);
+}
+
+void
+tls_auth_options_insert(struct nsd_options* opt, struct tls_auth_options* auth)
+{
+	if(!auth->name) return;
+	auth->node.key = auth->name;
+	(void)rbtree_insert(opt->tls_auths, &auth->node);
+}
+
+struct tls_auth_options*
+tls_auth_options_find(struct nsd_options* opt, const char* name)
+{
+	return (struct tls_auth_options*)rbtree_search(opt->tls_auths, name);
 }
 
 /** remove tsig_key contents */
@@ -1900,7 +2009,7 @@ config_make_zonefile(struct zone_options* zone, struct nsd* nsd)
 	static char f[1024];
 	/* if not a template, return as-is */
 	if(!strchr(zone->pattern->zonefile, '%')) {
-		if (nsd->chrootdir && nsd->chrootdir[0] && 
+		if (nsd->chrootdir && nsd->chrootdir[0] &&
 			zone->pattern->zonefile &&
 			zone->pattern->zonefile[0] == '/' &&
 			strncmp(zone->pattern->zonefile, nsd->chrootdir,
@@ -2028,6 +2137,8 @@ parse_acl_info(region_type* region, char* ip, const char* key)
 	acl->ixfr_disabled = 0;
 	acl->bad_xfr_count = 0;
 	acl->key_options = 0;
+	acl->tls_auth_options = 0;
+	acl->tls_auth_name = 0;
 	acl->is_ipv6 = 0;
 	acl->port = 0;
 	memset(&acl->addr, 0, sizeof(union acl_addr_storage));
@@ -2158,6 +2269,10 @@ config_apply_pattern(struct pattern_options *dest, const char* name)
 		dest->min_retry_time = pat->min_retry_time;
 		dest->min_retry_time_is_default = 0;
 	}
+	if(!expire_time_is_default(pat->min_expire_time_expr)) {
+		dest->min_expire_time = pat->min_expire_time;
+		dest->min_expire_time_expr = pat->min_expire_time_expr;
+	}
 	dest->size_limit_xfr = pat->size_limit_xfr;
 #ifdef RATELIMIT
 	dest->rrl_whitelist |= pat->rrl_whitelist;
@@ -2167,6 +2282,7 @@ config_apply_pattern(struct pattern_options *dest, const char* name)
 	copy_and_append_acls(&dest->request_xfr, pat->request_xfr);
 	copy_and_append_acls(&dest->notify, pat->notify);
 	copy_and_append_acls(&dest->provide_xfr, pat->provide_xfr);
+	copy_and_append_acls(&dest->allow_query, pat->allow_query);
 	copy_and_append_acls(&dest->outgoing_interface, pat->outgoing_interface);
 	if(pat->multi_master_check)
 		dest->multi_master_check = pat->multi_master_check;
@@ -2256,4 +2372,145 @@ options_remote_is_address(struct nsd_options* cfg)
 	if(!cfg->control_interface->address) return 1;
 	if(cfg->control_interface->address[0] == 0) return 1;
 	return (cfg->control_interface->address[0] != '/');
+}
+
+#ifdef HAVE_GETIFADDRS
+static void
+resolve_ifa_name(struct ifaddrs *ifas, const char *search_ifa, char ***ip_addresses, size_t *ip_addresses_size)
+{
+	struct ifaddrs *ifa;
+	size_t last_ip_addresses_size = *ip_addresses_size;
+
+	for(ifa = ifas; ifa != NULL; ifa = ifa->ifa_next) {
+		sa_family_t family;
+		const char* atsign;
+#ifdef INET6      /* |   address ip    | % |  ifa name  | @ |  port  | nul */
+		char addr_buf[INET6_ADDRSTRLEN + 1 + IF_NAMESIZE + 1 + 16 + 1];
+#else
+		char addr_buf[INET_ADDRSTRLEN + 1 + 16 + 1];
+#endif
+
+		if((atsign=strrchr(search_ifa, '@')) != NULL) {
+			if(strlen(ifa->ifa_name) != (size_t)(atsign-search_ifa)
+			   || strncmp(ifa->ifa_name, search_ifa,
+			   atsign-search_ifa) != 0)
+				continue;
+		} else {
+			if(strcmp(ifa->ifa_name, search_ifa) != 0)
+				continue;
+			atsign = "";
+		}
+
+		if(ifa->ifa_addr == NULL)
+			continue;
+
+		family = ifa->ifa_addr->sa_family;
+		if(family == AF_INET) {
+			char a4[INET_ADDRSTRLEN + 1];
+			struct sockaddr_in *in4 = (struct sockaddr_in *)
+				ifa->ifa_addr;
+			if(!inet_ntop(family, &in4->sin_addr, a4, sizeof(a4)))
+				error("inet_ntop");
+			snprintf(addr_buf, sizeof(addr_buf), "%s%s",
+				a4, atsign);
+		}
+#ifdef INET6
+		else if(family == AF_INET6) {
+			struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)
+				ifa->ifa_addr;
+			char a6[INET6_ADDRSTRLEN + 1];
+			char if_index_name[IF_NAMESIZE + 1];
+			if_index_name[0] = 0;
+			if(!inet_ntop(family, &in6->sin6_addr, a6, sizeof(a6)))
+				error("inet_ntop");
+			if_indextoname(in6->sin6_scope_id,
+				(char *)if_index_name);
+			if (strlen(if_index_name) != 0) {
+				snprintf(addr_buf, sizeof(addr_buf),
+					"%s%%%s%s", a6, if_index_name, atsign);
+			} else {
+				snprintf(addr_buf, sizeof(addr_buf), "%s%s",
+					a6, atsign);
+			}
+		}
+#endif
+		else {
+			continue;
+		}
+		VERBOSITY(4, (LOG_INFO, "interface %s has address %s",
+			search_ifa, addr_buf));
+
+		*ip_addresses = xrealloc(*ip_addresses, sizeof(char *) * (*ip_addresses_size + 1));
+		(*ip_addresses)[*ip_addresses_size] = xstrdup(addr_buf);
+		(*ip_addresses_size)++;
+	}
+
+	if (*ip_addresses_size == last_ip_addresses_size) {
+		*ip_addresses = xrealloc(*ip_addresses, sizeof(char *) * (*ip_addresses_size + 1));
+		(*ip_addresses)[*ip_addresses_size] = xstrdup(search_ifa);
+		(*ip_addresses_size)++;
+	}
+}
+
+static void
+resolve_interface_names_for_ref(struct ip_address_option** ip_addresses_ref,
+		struct ifaddrs *addrs, region_type* region)
+{
+	struct ip_address_option *ip_addr;
+	struct ip_address_option *last = NULL;
+	struct ip_address_option *first = NULL;
+
+	/* replace the list of ip_adresses with a new list where the
+	 * interface names are replaced with their ip-address strings
+	 * from getifaddrs.  An interface can have several addresses. */
+	for(ip_addr = *ip_addresses_ref; ip_addr; ip_addr = ip_addr->next) {
+		char **ip_addresses = NULL;
+		size_t ip_addresses_size = 0, i;
+		resolve_ifa_name(addrs, ip_addr->address, &ip_addresses,
+			&ip_addresses_size);
+
+		for (i = 0; i < ip_addresses_size; i++) {
+			struct ip_address_option *current;
+			/* this copies the range_option, dev, and fib from
+			 * the original ip_address option to the new ones
+			 * with the addresses spelled out by resolve_ifa_name*/
+			current = region_alloc_init(region, ip_addr,
+				sizeof(*ip_addr));
+			current->address = region_strdup(region,
+				ip_addresses[i]);
+			current->next = NULL;
+			free(ip_addresses[i]);
+
+			if(first == NULL) {
+				first = current;
+			} else {
+				last->next = current;
+			}
+			last = current;
+		}
+		free(ip_addresses);
+	}
+	*ip_addresses_ref = first;
+
+}
+#endif /* HAVE_GETIFADDRS */
+
+void
+resolve_interface_names(struct nsd_options* options)
+{
+#ifdef HAVE_GETIFADDRS
+	struct ifaddrs *addrs;
+
+	if(getifaddrs(&addrs) == -1)
+		  error("failed to list interfaces");
+
+	resolve_interface_names_for_ref(&options->ip_addresses, 
+			addrs, options->region);
+	resolve_interface_names_for_ref(&options->control_interface, 
+			addrs, options->region);
+
+	freeifaddrs(addrs);
+#else
+	(void)options;
+#endif /* HAVE_GETIFADDRS */
 }

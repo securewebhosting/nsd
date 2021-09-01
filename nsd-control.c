@@ -60,13 +60,20 @@
 #ifdef HAVE_SYS_UN_H
 #include <sys/un.h>
 #endif
+#include <fcntl.h>
+#ifndef AF_LOCAL
+#define AF_LOCAL AF_UNIX
+#endif
 #include "util.h"
 #include "tsig.h"
 #include "options.h"
 
-static void usage() ATTR_NORETURN;
+static void usage(void) ATTR_NORETURN;
 static void ssl_err(const char* s) ATTR_NORETURN;
 static void ssl_path_err(const char* s, const char *path) ATTR_NORETURN;
+
+/** timeout to wait for connection over stream, in msec */
+#define NSD_CONTROL_CONNECT_TIMEOUT 5000
 
 /** Give nsd-control usage, and exit (1). */
 static void
@@ -107,6 +114,10 @@ usage()
 	printf("  add_tsig <name> <secret> [algo] add new key with the given parameters\n");
 	printf("  assoc_tsig <zone> <key_name>	associate <zone> with given tsig <key_name> name\n");
 	printf("  del_tsig <key_name>		delete tsig <key_name> from configuration\n");
+	printf("  add_cookie_secret <secret>	add (or replace) a new cookie secret <secret>\n");
+	printf("  drop_cookie_secret		drop a staging cookie secret\n");
+	printf("  activate_cookie_secret	make a staging cookie secret active\n");
+	printf("  print_cookie_secrets		show all cookie secrets with their status\n");
 	exit(1);
 }
 
@@ -123,9 +134,7 @@ static void ssl_path_err(const char* s, const char *path)
 {
 	unsigned long err;
 	err = ERR_peek_error();
-	if (ERR_GET_LIB(err) == ERR_LIB_SYS &&
-		(ERR_GET_FUNC(err) == SYS_F_FOPEN ||
-		 ERR_GET_FUNC(err) == SYS_F_FREAD) ) {
+	if (ERR_GET_LIB(err) == ERR_LIB_SYS) {
 		fprintf(stderr, "error: %s\n%s: %s\n",
 			s, path, ERR_reason_error_string(err));
 		exit(1);
@@ -184,6 +193,21 @@ setup_ctx(struct nsd_options* cfg)
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
 
 	return ctx;
+}
+
+/** check connect error */
+static void
+checkconnecterr(int err, const char* svr, int port, int statuscmd)
+{
+	if(!port) fprintf(stderr, "error: connect (%s): %s\n", svr,
+		strerror(err));
+	else fprintf(stderr, "error: connect (%s@%d): %s\n", svr, port,
+		strerror(err));
+	if(err == ECONNREFUSED && statuscmd) {
+		printf("nsd is stopped\n");
+		exit(3);
+	}
+	exit(1);
 }
 
 /** contact the server with TCP connect */
@@ -271,17 +295,53 @@ contact_server(const char* svr, struct nsd_options* cfg, int statuscmd)
 		fprintf(stderr, "socket: %s\n", strerror(errno));
 		exit(1);
 	}
+	if(fcntl(fd, F_SETFL, O_NONBLOCK) == -1) {
+		fprintf(stderr, "error: set nonblocking: fcntl: %s",
+			strerror(errno));
+	}
 	if(connect(fd, (struct sockaddr*)&addr, addrlen) < 0) {
-		int err = errno;
-		if(!port) fprintf(stderr, "error: connect (%s): %s\n", svr,
-			strerror(err));
-		else fprintf(stderr, "error: connect (%s@%d): %s\n", svr, port,
-			strerror(err));
-		if(err == ECONNREFUSED && statuscmd) {
-			printf("nsd is stopped\n");
-			exit(3);
+		if(errno != EINPROGRESS) {
+			checkconnecterr(errno, svr, port, statuscmd);
 		}
-		exit(1);
+	}
+	while(1) {
+		fd_set rset, wset, eset;
+		struct timeval tv;
+		FD_ZERO(&rset);
+		FD_SET(fd, &rset);
+		FD_ZERO(&wset);
+		FD_SET(fd, &wset);
+		FD_ZERO(&eset);
+		FD_SET(fd, &eset);
+		tv.tv_sec = NSD_CONTROL_CONNECT_TIMEOUT/1000;
+		tv.tv_usec= (NSD_CONTROL_CONNECT_TIMEOUT%1000)*1000;
+		if(select(fd+1, &rset, &wset, &eset, &tv) == -1) {
+			fprintf(stderr, "select: %s\n", strerror(errno));
+			exit(1);
+		}
+		if(!FD_ISSET(fd, &rset) && !FD_ISSET(fd, &wset) &&
+			!FD_ISSET(fd, &eset)) {
+			fprintf(stderr, "timeout: could not connect to server\n");
+			exit(1);
+		} else {
+			/* check nonblocking connect error */
+			int error = 0;
+			socklen_t len = (socklen_t)sizeof(error);
+			if(getsockopt(fd, SOL_SOCKET, SO_ERROR, (void*)&error,
+				&len) < 0) {
+				error = errno; /* on solaris errno is error */
+			}
+			if(error != 0) {
+				if(error == EINPROGRESS || error == EWOULDBLOCK)
+					continue; /* try again later */
+				checkconnecterr(error, svr, port, statuscmd);
+			}
+		}
+		break;
+	}
+	if(fcntl(fd, F_SETFL, 0) == -1) {
+		fprintf(stderr, "error: set blocking: fcntl: %s",
+			strerror(errno));
 	}
 	return fd;
 }
@@ -438,6 +498,7 @@ go(const char* cfgfile, char* svr, int argc, char* argv[])
 	}
 	if(!opt->control_enable)
 		fprintf(stderr, "warning: control-enable is 'no' in the config file.\n");
+	resolve_interface_names(opt);
 	ctx = setup_ctx(opt);
 
 	/* contact server */
@@ -465,16 +526,14 @@ int main(int argc, char* argv[])
 	int c;
 	const char* cfgfile = CONFIGFILE;
 	char* svr = NULL;
-#ifdef USE_WINSOCK
-	int r;
-	WSADATA wsa_data;
-#endif
 	log_init("nsd-control");
 
 #ifdef HAVE_ERR_LOAD_CRYPTO_STRINGS
 	ERR_load_crypto_strings();
 #endif
+#if defined(HAVE_ERR_LOAD_SSL_STRINGS) && !defined(DEPRECATED_ERR_LOAD_SSL_STRINGS)
 	ERR_load_SSL_strings();
+#endif
 #if OPENSSL_VERSION_NUMBER < 0x10100000 || !defined(HAVE_OPENSSL_INIT_CRYPTO)
 	OpenSSL_add_all_algorithms();
 #else

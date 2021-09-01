@@ -40,8 +40,6 @@
 
 #define XFRD_UDP_TIMEOUT 10 /* seconds, before a udp request times out */
 #define XFRD_NO_IXFR_CACHE 172800 /* 48h before retrying ixfr's after notimpl */
-#define XFRD_LOWERBOUND_REFRESH 1 /* seconds, smallest refresh timeout */
-#define XFRD_LOWERBOUND_RETRY 1 /* seconds, smallest retry timeout */
 #define XFRD_MAX_ROUNDS 1 /* max number of rounds along the masters */
 #define XFRD_TSIG_MAX_UNSIGNED 103 /* max number of packets without tsig in a tcp stream. */
 			/* rfc recommends 100, +3 for offbyone errors/interoperability. */
@@ -202,7 +200,7 @@ xfrd_init(int socket, struct nsd* nsd, int shortsoa, int reload_active,
 	daemon_remote_attach(xfrd->nsd->rc, xfrd);
 #endif
 
-	xfrd->tcp_set = xfrd_tcp_set_create(xfrd->region);
+	xfrd->tcp_set = xfrd_tcp_set_create(xfrd->region, nsd->options->tls_cert_bundle);
 	xfrd->tcp_set->tcp_timeout = nsd->tcp_timeout;
 #if !defined(HAVE_ARC4RANDOM) && !defined(HAVE_GETRANDOM)
 	srandom((unsigned long) getpid() * (unsigned long) time(NULL));
@@ -412,6 +410,8 @@ xfrd_shutdown()
 	daemon_remote_delete(xfrd->nsd->rc); /* ssl-delete secret keys */
 	if (xfrd->nsd->tls_ctx)
 		SSL_CTX_free(xfrd->nsd->tls_ctx);
+	if (xfrd->tcp_set->ssl_ctx)
+		SSL_CTX_free(xfrd->tcp_set->ssl_ctx);
 #endif
 #ifdef USE_DNSTAP
 	dt_collector_close(nsd.dt_collector, &nsd);
@@ -477,6 +477,7 @@ xfrd_clean_pending_tasks(struct nsd* nsd, udb_base* u)
 void
 xfrd_init_slave_zone(xfrd_state_type* xfrd, struct zone_options* zone_opt)
 {
+	int num, num_xot;
 	xfrd_zone_type *xzone;
 	xzone = (xfrd_zone_type*)region_alloc(xfrd->region,
 		sizeof(xfrd_zone_type));
@@ -517,6 +518,16 @@ xfrd_init_slave_zone(xfrd_state_type* xfrd, struct zone_options* zone_opt)
 
 	/* set refreshing anyway, if we have data it may be old */
 	xfrd_set_refresh_now(xzone);
+
+	/*Check all or none of acls use XoT*/
+	num = 0;
+	num_xot = 0;
+	for (; xzone->master != NULL; xzone->master = xzone->master->next, num++) {
+		if (xzone->master->tls_auth_options != NULL) num_xot++; 
+	}
+	if (num_xot != 0 && num != num_xot)
+		log_msg(LOG_WARNING, "Some but not all request-xfrs for %s have XFR-over-TLS configured",
+			xzone->apex_str);
 
 	xzone->node.key = xzone->apex;
 	rbtree_insert(xfrd->zones, (rbnode_type*)xzone);
@@ -862,38 +873,28 @@ xfrd_set_timer_refresh(xfrd_zone_type* zone)
 {
 	time_t set_refresh;
 	time_t set_expire;
-	time_t set_min;
 	time_t set;
 	if(zone->soa_disk_acquired == 0 || zone->state != xfrd_zone_ok) {
 		xfrd_set_timer_retry(zone);
 		return;
 	}
 	/* refresh or expire timeout, whichever is earlier */
-	set_refresh = ntohl(zone->soa_disk.refresh);
-	if (set_refresh > (time_t)zone->zone_options->pattern->max_refresh_time)
-		set_refresh = zone->zone_options->pattern->max_refresh_time;
-	else if (set_refresh < (time_t)zone->zone_options->pattern->min_refresh_time)
-		set_refresh = zone->zone_options->pattern->min_refresh_time;
-	set_refresh += zone->soa_disk_acquired;
-	set_expire = zone->soa_disk_acquired + ntohl(zone->soa_disk.expire);
-	if(set_refresh < set_expire)
-		set = set_refresh;
-	else set = set_expire;
-	set_min = zone->soa_disk_acquired + XFRD_LOWERBOUND_REFRESH;
-	if(set < set_min)
-		set = set_min;
-	if(set < xfrd_time())
-		set = 0;
-	else	set -= xfrd_time();
-	if(set > XFRD_TRANSFER_TIMEOUT_MAX)
-		set = XFRD_TRANSFER_TIMEOUT_MAX;
-	xfrd_set_timer(zone, set);
+	set_refresh = bound_soa_disk_refresh(zone);
+	set_expire  = bound_soa_disk_expire(zone);
+	set = zone->soa_disk_acquired + ( set_refresh < set_expire
+	                                ? set_refresh : set_expire );
+
+	/* set point in time to period for xfrd_set_timer() */
+	xfrd_set_timer(zone, within_refresh_bounds(zone,
+		  set > xfrd_time()
+		? set - xfrd_time() : XFRD_LOWERBOUND_REFRESH));
 }
 
 static void
 xfrd_set_timer_retry(xfrd_zone_type* zone)
 {
 	time_t set_retry;
+	time_t set_expire;
 	int mult;
 	/* perform exponential backoff in all the cases */
 	if(zone->fresh_xfr_timeout == 0)
@@ -911,37 +912,36 @@ xfrd_set_timer_retry(xfrd_zone_type* zone)
 
 	/* set timer for next retry or expire timeout if earlier. */
 	if(zone->soa_disk_acquired == 0) {
-		/* if no information, use reasonable timeout */
-		xfrd_set_timer(zone, zone->fresh_xfr_timeout
-			+ random_generate(zone->fresh_xfr_timeout));
-	} else if(zone->state == xfrd_zone_expired ||
-		xfrd_time() + (time_t)ntohl(zone->soa_disk.retry)*mult <
-		zone->soa_disk_acquired + (time_t)ntohl(zone->soa_disk.expire))
-	{
-		set_retry = ntohl(zone->soa_disk.retry);
-		set_retry *= mult;
-		if(set_retry > XFRD_TRANSFER_TIMEOUT_MAX)
-			set_retry = XFRD_TRANSFER_TIMEOUT_MAX;
-		if(set_retry > (time_t)zone->zone_options->pattern->max_retry_time)
-			set_retry = zone->zone_options->pattern->max_retry_time;
-		else if(set_retry < (time_t)zone->zone_options->pattern->min_retry_time)
-			set_retry = zone->zone_options->pattern->min_retry_time;
-		if(set_retry < XFRD_LOWERBOUND_RETRY)
-			set_retry = XFRD_LOWERBOUND_RETRY;
-		xfrd_set_timer(zone, set_retry);
-	} else {
-		set_retry = ntohl(zone->soa_disk.expire);
-		if(set_retry > XFRD_TRANSFER_TIMEOUT_MAX)
-			set_retry = XFRD_TRANSFER_TIMEOUT_MAX;
-		if(set_retry < XFRD_LOWERBOUND_RETRY)
-			xfrd_set_timer(zone, XFRD_LOWERBOUND_RETRY);
-		else {
-			if(zone->soa_disk_acquired + set_retry < xfrd_time())
-				xfrd_set_timer(zone, XFRD_LOWERBOUND_RETRY);
-			else xfrd_set_timer(zone, zone->soa_disk_acquired +
-				set_retry - xfrd_time());
-		}
+		/* if no information, use reasonable timeout
+		 * within configured and defined bounds
+		 */
+		xfrd_set_timer(zone,
+			within_retry_bounds(zone, zone->fresh_xfr_timeout
+				+ random_generate(zone->fresh_xfr_timeout)));
+		return;
 	}
+	/* exponential backoff within configured and defined bounds */
+	set_retry = within_retry_bounds(zone,
+			ntohl(zone->soa_disk.retry) * mult);
+	if(zone->state == xfrd_zone_expired) {
+		xfrd_set_timer(zone, set_retry);
+		return;
+	}
+	/* retry or expire timeout, whichever is earlier */
+	set_expire = zone->soa_disk_acquired + bound_soa_disk_expire(zone);
+	if(xfrd_time() + set_retry < set_expire) {
+		xfrd_set_timer(zone, set_retry);
+		return;
+	}
+	/* Not expired, but next retry will be > than expire timeout.
+	 * Retry when the expire timeout runs out.
+	 * set_expire is below retry upper bounds (if statement above),
+	 * but not necessarily above lower bounds,
+	 * so use within_retry_bounds() again.
+	 */
+	xfrd_set_timer(zone, within_retry_bounds(zone,
+		  set_expire > xfrd_time()
+		? set_expire - xfrd_time() : XFRD_LOWERBOUND_RETRY));
 }
 
 void
@@ -990,13 +990,15 @@ xfrd_handle_zone(int ATTR_UNUSED(fd), short event, void* arg)
 	if(zone->soa_disk_acquired)
 	{
 		if (zone->state != xfrd_zone_expired &&
-			xfrd_time() >= zone->soa_disk_acquired + (time_t)ntohl(zone->soa_disk.expire)) {
+			xfrd_time() >= zone->soa_disk_acquired
+					+ bound_soa_disk_expire(zone)) {
 			/* zone expired */
 			log_msg(LOG_ERR, "xfrd: zone %s has expired", zone->apex_str);
 			xfrd_set_zone_state(zone, xfrd_zone_expired);
 		}
 		else if(zone->state == xfrd_zone_ok &&
-			xfrd_time() >= zone->soa_disk_acquired + (time_t)ntohl(zone->soa_disk.refresh)) {
+			xfrd_time() >= zone->soa_disk_acquired
+			               + bound_soa_disk_refresh(zone)) {
 			/* zone goes to refreshing state. */
 			DEBUG(DEBUG_XFRD,1, (LOG_INFO, "xfrd: zone %s is refreshing", zone->apex_str));
 			xfrd_set_zone_state(zone, xfrd_zone_refreshing);
@@ -1253,6 +1255,8 @@ xfrd_set_timer(xfrd_zone_type* zone, time_t t)
 {
 	int fd = zone->zone_handler.ev_fd;
 	int fl = ((fd == -1)?EV_TIMEOUT:zone->zone_handler_flags);
+	if(t > XFRD_TRANSFER_TIMEOUT_MAX)
+		t = XFRD_TRANSFER_TIMEOUT_MAX;
 	/* randomize the time, within 90%-100% of original */
 	/* not later so zones cannot expire too late */
 	/* only for times far in the future */
@@ -1281,6 +1285,7 @@ void
 xfrd_handle_incoming_soa(xfrd_zone_type* zone,
 	xfrd_soa_type* soa, time_t acquired)
 {
+	time_t seconds_since_acquired;
 	if(soa == NULL) {
 		/* nsd no longer has a zone in memory */
 		zone->soa_nsd_acquired = 0;
@@ -1316,10 +1321,12 @@ xfrd_handle_incoming_soa(xfrd_zone_type* zone,
 		zone->soa_nsd = *soa;
 		zone->soa_nsd_acquired = acquired;
 		xfrd->write_zonefile_needed = 1;
+		seconds_since_acquired =
+			  xfrd_time() > zone->soa_disk_acquired
+			? xfrd_time() - zone->soa_disk_acquired : 0;
 
 		/* update zone state based on served soa */
-		if(xfrd_time() - zone->soa_nsd_acquired
-			< (time_t)ntohl(zone->soa_nsd.expire))
+		if(seconds_since_acquired < bound_soa_nsd_expire(zone))
 		{
 			xfrd_set_zone_state(zone, xfrd_zone_ok);
 		}
@@ -1329,21 +1336,21 @@ xfrd_handle_incoming_soa(xfrd_zone_type* zone,
 		if (cmp == 0) {
 			/* reset exponential backoff, we got a normal timer now */
 			zone->fresh_xfr_timeout = 0;
-			if(xfrd_time() - zone->soa_disk_acquired
-				< (time_t)ntohl(zone->soa_disk.refresh))
+			if(seconds_since_acquired < bound_soa_disk_refresh(zone))
 			{
 				/* zone ok, wait for refresh time */
+				/* TODO: Why not set state to xfrd_zone_ok?
+				 * xfrd_set_zone_state(zone, xfrd_zone_ok);
+				 */
 				zone->round_num = -1;
 				xfrd_set_timer_refresh(zone);
-			} else if(xfrd_time() - zone->soa_disk_acquired
-				< (time_t)ntohl(zone->soa_disk.expire))
+			} else if(seconds_since_acquired < bound_soa_disk_expire(zone))
 			{
 				/* zone refreshing */
 				xfrd_set_zone_state(zone, xfrd_zone_refreshing);
 				xfrd_set_refresh_now(zone);
 			}
-			if(xfrd_time() - zone->soa_disk_acquired
-				>= (time_t)ntohl(zone->soa_disk.expire))
+			if(seconds_since_acquired >= bound_soa_disk_expire(zone))
 			{
 				/* zone expired */
 				xfrd_set_zone_state(zone, xfrd_zone_expired);
@@ -1726,6 +1733,8 @@ xfrd_send_ixfr_request_udp(xfrd_zone_type* zone)
 		qid_generate());
 	zone->query_id = ID(xfrd->packet);
 	xfrd_prepare_zone_xfr(zone);
+	assert(xfrd->latest_xfr); /* created by xfrd_prepare_zone_xfr */
+	xfrd->latest_xfr->query_type = TYPE_IXFR;
 	DEBUG(DEBUG_XFRD,1, (LOG_INFO, "sent query with ID %d", zone->query_id));
         NSCOUNT_SET(xfrd->packet, 1);
 	xfrd_write_soa_buffer(xfrd->packet, zone->apex, &zone->soa_disk);
@@ -2078,12 +2087,12 @@ xfrd_parse_received_xfr_packet(xfrd_zone_type* zone, buffer_type* packet,
 		if(zone->soa_disk_acquired != 0 &&
 			zone->state != xfrd_zone_expired /* if expired - accept anything */ &&
 			compare_serial(ntohl(soa->serial), ntohl(zone->soa_disk.serial)) < 0) {
-			DEBUG(DEBUG_XFRD,1, (LOG_INFO,
-				"xfrd: zone %s ignoring old serial from %s",
-				zone->apex_str, zone->master->ip_address_spec));
-			VERBOSITY(1, (LOG_INFO,
-				"xfrd: zone %s ignoring old serial from %s",
-				zone->apex_str, zone->master->ip_address_spec));
+                        DEBUG(DEBUG_XFRD,1, (LOG_INFO,
+                                "xfrd: zone %s ignoring old serial (%u/%u) from %s",
+                                zone->apex_str, ntohl(zone->soa_disk.serial), ntohl(soa->serial), zone->master->ip_address_spec));
+                        VERBOSITY(1, (LOG_INFO,
+                                "xfrd: zone %s ignoring old serial (%u/%u) from %s",
+                                zone->apex_str, ntohl(zone->soa_disk.serial), ntohl(soa->serial), zone->master->ip_address_spec));
 			region_destroy(tempregion);
 			return xfrd_packet_bad;
 		}
@@ -2275,7 +2284,8 @@ xfrd_handle_received_xfr_packet(xfrd_zone_type* zone, buffer_type* packet)
 					(int)zone->latest_xfr->msg_new_serial:0,
 					zone->master->ip_address_spec));
 			}
-			if (res == xfrd_packet_notimpl)
+			if (res == xfrd_packet_notimpl
+				&& zone->query_type == TYPE_IXFR)
 				return res;
 			else
 				return xfrd_packet_bad;

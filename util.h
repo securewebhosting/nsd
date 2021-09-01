@@ -17,6 +17,7 @@
 struct rr;
 struct buffer;
 struct region;
+struct nsd;
 
 #ifdef HAVE_SYSLOG_H
 #  include <syslog.h>
@@ -148,6 +149,7 @@ void *xmallocarray(size_t num, size_t size);
 void *xalloc_zero(size_t size);
 void *xalloc_array_zero(size_t num, size_t size);
 void *xrealloc(void *ptr, size_t size);
+char *xstrdup(const char *src);
 
 /*
  * Mmap allocator routines.
@@ -229,9 +231,9 @@ static inline uint16_t
 read_uint16(const void *src)
 {
 #ifdef ALLOW_UNALIGNED_ACCESSES
-	return ntohs(* (uint16_t *) src);
+	return ntohs(* (const uint16_t *) src);
 #else
-	uint8_t *p = (uint8_t *) src;
+	const uint8_t *p = (const uint8_t *) src;
 	return (p[0] << 8) | p[1];
 #endif
 }
@@ -240,9 +242,9 @@ static inline uint32_t
 read_uint32(const void *src)
 {
 #ifdef ALLOW_UNALIGNED_ACCESSES
-	return ntohl(* (uint32_t *) src);
+	return ntohl(* (const uint32_t *) src);
 #else
-	uint8_t *p = (uint8_t *) src;
+	const uint8_t *p = (const uint8_t *) src;
 	return (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
 #endif
 }
@@ -250,7 +252,7 @@ read_uint32(const void *src)
 static inline uint64_t
 read_uint64(const void *src)
 {
-	uint8_t *p = (uint8_t *) src;
+	const uint8_t *p = (const uint8_t *) src;
 	return
 	    ((uint64_t)p[0] << 56) |
 	    ((uint64_t)p[1] << 48) |
@@ -400,7 +402,7 @@ struct state_pretty_rr {
 struct state_pretty_rr* create_pretty_rr(struct region* region);
 /* print rr to file, returns 0 on failure(nothing is written) */
 int print_rr(FILE *out, struct state_pretty_rr* state, struct rr *record,
-	struct region* tmp_region, struct buffer* tmp_buffer); 
+	struct region* tmp_region, struct buffer* tmp_buffer);
 
 /*
  * Convert a numeric rcode value to a human readable string
@@ -439,4 +441,14 @@ int number_of_cpus(void);
 int set_cpu_affinity(cpuset_t *set);
 #endif
 
+/* Add a cookie secret. If there are no secrets yet, the secret will become
+ * the active secret. Otherwise it will become the staging secret.
+ * Active secrets are used to both verify and create new DNS Cookies.
+ * Staging secrets are only used to verify DNS Cookies. */
+void add_cookie_secret(struct nsd* nsd, uint8_t* secret);
+/* Makes the staging cookie secret active and the active secret staging. */
+void activate_cookie_secret(struct nsd* nsd);
+/* Drop a cookie secret. Drops the staging secret. An active secret will not
+ * be dropped. */
+void drop_cookie_secret(struct nsd* nsd);
 #endif /* _UTIL_H_ */

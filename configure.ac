@@ -5,8 +5,8 @@ dnl
 sinclude(acx_nlnetlabs.m4)
 sinclude(dnstap/dnstap.m4)
 
-AC_INIT(NSD,4.3.2,nsd-bugs@nlnetlabs.nl)
-AC_CONFIG_HEADER([config.h])
+AC_INIT([NSD],[4.3.8],[nsd-bugs@nlnetlabs.nl])
+AC_CONFIG_HEADERS([config.h])
 
 #
 # Setup the standard programs
@@ -19,8 +19,11 @@ AC_ARG_VAR(EGREP, [location of the egrep program])
 AC_ARG_VAR(LEX, [location of the lex program with GNU extensions (flex)])
 AC_ARG_VAR(YACC, [location of the yacc program with GNU extensions (bison)])
 
+cmdln="`echo $@ | sed -e 's/\\\\/\\\\\\\\/g' | sed -e 's/"/\\\\"/'g`"
+AC_DEFINE_UNQUOTED(CONFCMDLINE, ["$cmdln"], [Command line arguments used with configure])
+
 CFLAGS="$CFLAGS"
-AC_AIX
+AC_USE_SYSTEM_EXTENSIONS
 if test "$ac_cv_header_minix_config_h" = "yes"; then
 	AC_DEFINE(_NETBSD_SOURCE,1, [Enable for compile on Minix])
 fi
@@ -48,7 +51,7 @@ esac
 #
 configdir=$sysconfdir/nsd
 AC_ARG_WITH([configdir],
-	AC_HELP_STRING([--with-configdir=dir], [NSD configuration directory]),
+	AS_HELP_STRING([--with-configdir=dir],[NSD configuration directory]),
 	[configdir=$withval])
 AC_DEFINE_UNQUOTED(CONFIGDIR, ["`eval echo $configdir`"], [NSD config dir])
 AC_SUBST(configdir)
@@ -57,7 +60,7 @@ AC_SUBST(configdir)
 # Determine configuration file
 nsd_conf_file=${configdir}/nsd.conf
 AC_ARG_WITH([nsd_conf_file],
-	AC_HELP_STRING([--with-nsd_conf_file=path], [Pathname to the NSD configuration file]),
+	AS_HELP_STRING([--with-nsd_conf_file=path],[Pathname to the NSD configuration file]),
 	[nsd_conf_file=$withval])
 AC_SUBST(nsd_conf_file)
 # the eval is to evaluate shell expansion twice, once
@@ -69,7 +72,7 @@ AC_DEFINE_UNQUOTED(CONFIGFILE, ["`eval echo $nsd_conf_file`"], [Pathname to the 
 #
 logfile=${localstatedir}/log/nsd.log
 AC_ARG_WITH([logfile],
-	AC_HELP_STRING([--with-logfile=path], [Pathname to the default log file]),
+	AS_HELP_STRING([--with-logfile=path],[Pathname to the default log file]),
 	[logfile=$withval])
 AC_SUBST(logfile)
 
@@ -88,7 +91,7 @@ else
 	pidfile=${dbdir}/nsd.pid
 fi
 AC_ARG_WITH([pidfile],
-	AC_HELP_STRING([--with-pidfile=path], [Pathname to the NSD pidfile]),
+	AS_HELP_STRING([--with-pidfile=path],[Pathname to the NSD pidfile]),
 	[pidfile=$withval])
 AC_SUBST(pidfile)
 AC_DEFINE_UNQUOTED(PIDFILE, ["`eval echo $pidfile`"], [Pathname to the NSD pidfile])
@@ -98,7 +101,7 @@ AC_DEFINE_UNQUOTED(PIDFILE, ["`eval echo $pidfile`"], [Pathname to the NSD pidfi
 #
 dbfile=${dbdir}/nsd.db
 AC_ARG_WITH([dbfile],
-	AC_HELP_STRING([--with-dbfile=path], [Pathname to the NSD database]),
+	AS_HELP_STRING([--with-dbfile=path],[Pathname to the NSD database]),
 	[dbfile=$withval])
 AC_SUBST(dbfile)
 AC_DEFINE_UNQUOTED(DBFILE, ["`eval echo $dbfile`"], [Pathname to the NSD database])
@@ -116,29 +119,26 @@ AC_SUBST(piddir)
 #
 zonesdir=$configdir
 AC_ARG_WITH([zonesdir],
-	AC_HELP_STRING([--with-zonesdir=dir], [NSD default location for zone files]),
+	AS_HELP_STRING([--with-zonesdir=dir],[NSD default location for zone files]),
 	[zonesdir=$withval])
 AC_SUBST(zonesdir)
 AC_DEFINE_UNQUOTED(ZONESDIR, ["`eval echo $zonesdir`"], [NSD default location for zone files. Empty string or NULL to disable.])
 
 # default xfrd file location.
 xfrdfile=${dbdir}/xfrd.state
-AC_ARG_WITH([xfrdfile], AC_HELP_STRING([--with-xfrdfile=path],
-	[Pathname to the NSD xfrd zone timer state file]), [xfrdfile=$withval])
+AC_ARG_WITH([xfrdfile], AS_HELP_STRING([--with-xfrdfile=path],[Pathname to the NSD xfrd zone timer state file]), [xfrdfile=$withval])
 AC_DEFINE_UNQUOTED(XFRDFILE, ["`eval echo $xfrdfile`"], [Pathname to the NSD xfrd zone timer state file.])
 AC_SUBST(xfrdfile)
 
 # default zonelist file location.
 zonelistfile=${dbdir}/zone.list
-AC_ARG_WITH([zonelistfile], AC_HELP_STRING([--with-zonelistfile=path],
-	[Pathname to the NSD zone list file]), [zonelistfile=$withval])
+AC_ARG_WITH([zonelistfile], AS_HELP_STRING([--with-zonelistfile=path],[Pathname to the NSD zone list file]), [zonelistfile=$withval])
 AC_DEFINE_UNQUOTED(ZONELISTFILE, ["`eval echo $zonelistfile`"], [Pathname to the NSD zone list file.])
 AC_SUBST(zonelistfile)
 
 # default xfr dir location.
 xfrdir="/tmp"
-AC_ARG_WITH([xfrdir], AC_HELP_STRING([--with-xfrdir=path],
-	[Pathname to where the NSD transfer dir is created]), [xfrdir=$withval])
+AC_ARG_WITH([xfrdir], AS_HELP_STRING([--with-xfrdir=path],[Pathname to where the NSD transfer dir is created]), [xfrdir=$withval])
 AC_DEFINE_UNQUOTED(XFRDIR, ["`eval echo $xfrdir`"], [Pathname to where the NSD transfer dir is created.])
 AC_SUBST(xfrdir)
 
@@ -157,7 +157,7 @@ AC_DEFINE_UNQUOTED(NSD_START_PATH, ["$nsd_start_path"], [Pathname to start nsd f
 # Determine default chroot directory
 #
 AC_ARG_WITH([chroot],
-	AC_HELP_STRING([--with-chroot=dir], [NSD default chroot directory]),
+	AS_HELP_STRING([--with-chroot=dir],[NSD default chroot directory]),
 	[
 		chrootdir=$withval
 		AC_DEFINE_UNQUOTED(CHROOTDIR, ["`eval echo $chrootdir`"], [NSD default chroot directory])
@@ -169,7 +169,7 @@ AC_SUBST(chrootdir)
 #
 user=nsd
 AC_ARG_WITH([user],
-	AC_HELP_STRING([--with-user=username], [User name or ID to answer the queries with]),
+	AS_HELP_STRING([--with-user=username],[User name or ID to answer the queries with]),
 	[user=$withval])
 AC_SUBST(user)
 AC_DEFINE_UNQUOTED(USER, ["$user"], [the user name to drop privileges to])
@@ -179,7 +179,7 @@ AC_PROG_SED
 AC_PROG_AWK
 AC_PROG_GREP
 AC_PROG_EGREP
-AC_PROG_LEX
+AC_PROG_LEX([noyywrap])
 AC_PROG_YACC
 AC_PROG_LN_S
 AC_PROG_INSTALL
@@ -219,15 +219,12 @@ AC_DEFUN([AC_CHECK_FORMAT_ATTRIBUTE],
 AC_MSG_CHECKING(whether the C compiler (${CC-cc}) accepts the "format" attribute)
 AC_CACHE_VAL(ac_cv_c_format_attribute,
 [ac_cv_c_format_attribute=no
-AC_TRY_COMPILE(
-[#include <stdio.h>
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdio.h>
 void f (char *format, ...) __attribute__ ((format (printf, 1, 2)));
 void (*pf) (char *format, ...) __attribute__ ((format (printf, 1, 2)));
-], [
+]], [[
    f ("%s", "str");
-],
-[ac_cv_c_format_attribute="yes"],
-[ac_cv_c_format_attribute="no"])
+]])],[ac_cv_c_format_attribute="yes"],[ac_cv_c_format_attribute="no"])
 ])
 
 AC_MSG_RESULT($ac_cv_c_format_attribute)
@@ -241,14 +238,11 @@ AC_DEFUN([AC_CHECK_UNUSED_ATTRIBUTE],
 AC_MSG_CHECKING(whether the C compiler (${CC-cc}) accepts the "unused" attribute)
 AC_CACHE_VAL(ac_cv_c_unused_attribute,
 [ac_cv_c_unused_attribute=no
-AC_TRY_COMPILE(
-[#include <stdio.h>
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdio.h>
 void f (char *u __attribute__((unused)));
-], [
+]], [[
    f ("x");
-],
-[ac_cv_c_unused_attribute="yes"],
-[ac_cv_c_unused_attribute="no"])
+]])],[ac_cv_c_unused_attribute="yes"],[ac_cv_c_unused_attribute="no"])
 ])
 
 AC_MSG_RESULT($ac_cv_c_unused_attribute)
@@ -257,19 +251,35 @@ if test $ac_cv_c_unused_attribute = yes; then
 fi
 ])dnl
 
+AC_DEFUN([CHECK_WEAK_ATTRIBUTE],
+[AC_REQUIRE([AC_PROG_CC])
+AC_MSG_CHECKING(whether the C compiler (${CC-cc}) accepts the "weak" attribute)
+AC_CACHE_VAL(ac_cv_c_weak_attribute,
+[ac_cv_c_weak_attribute=no
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[ #include <stdio.h>
+__attribute__((weak)) void f(int x) { printf("%d", x); }
+]], [[
+   f(1);
+]])],[ac_cv_c_weak_attribute="yes"],[ac_cv_c_weak_attribute="no"])
+])
+
+AC_MSG_RESULT($ac_cv_c_weak_attribute)
+if test $ac_cv_c_weak_attribute = yes; then
+  AC_DEFINE(HAVE_ATTR_WEAK, 1, [Whether the C compiler accepts the "weak" attribute])
+  AC_DEFINE(ATTR_WEAK, [__attribute__((weak))], [apply the weak attribute to a symbol])
+fi
+])dnl End of CHECK_WEAK_ATTRIBUTE
+
 AC_DEFUN([CHECK_NORETURN_ATTRIBUTE],
 [AC_REQUIRE([AC_PROG_CC])
 AC_MSG_CHECKING(whether the C compiler (${CC-cc}) accepts the "noreturn" attribute)
 AC_CACHE_VAL(ac_cv_c_noreturn_attribute,
 [ac_cv_c_noreturn_attribute=no
-AC_TRY_COMPILE(
-[ #include <stdio.h>
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[ #include <stdio.h>
 __attribute__((noreturn)) void f(int x) { printf("%d", x); }
-], [
+]], [[
    f(1);
-],
-[ac_cv_c_noreturn_attribute="yes"],
-[ac_cv_c_noreturn_attribute="no"])
+]])],[ac_cv_c_noreturn_attribute="yes"],[ac_cv_c_noreturn_attribute="no"])
 ])
 
 AC_MSG_RESULT($ac_cv_c_noreturn_attribute)
@@ -310,14 +320,10 @@ AC_DEFUN([AC_CHECK_CTIME_R],
 AC_MSG_CHECKING(whether ctime_r works with two arguments)
 AC_CACHE_VAL(ac_cv_c_ctime_c,
 [ac_cv_c_ctime_c=no
-AC_TRY_COMPILE(
-[#include <time.h>
-void testing (void) { time_t clock; char current_time[40]; ctime_r(&clock, current_time); }],
-[
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <time.h>
+void testing (void) { time_t clock; char current_time[40]; ctime_r(&clock, current_time); }]], [[
         testing();
-],
-[ac_cv_c_ctime_c="yes"],
-[ac_cv_c_ctime_c="no"])
+]])],[ac_cv_c_ctime_c="yes"],[ac_cv_c_ctime_c="no"])
 ])
 
 AC_MSG_RESULT($ac_cv_c_ctime_c)
@@ -345,6 +351,7 @@ AC_TYPE_OFF_T
 
 AC_CHECK_FORMAT_ATTRIBUTE
 AC_CHECK_UNUSED_ATTRIBUTE
+CHECK_WEAK_ATTRIBUTE
 CHECK_NORETURN_ATTRIBUTE
 ACX_CHECK_MEMCMP_SIGNED
 AC_CHECK_CTIME_R
@@ -355,14 +362,38 @@ AC_CHECK_CTIME_R
 # http://www.gnu.org/software/ac-archive/htmldoc/check_ssl.html and
 # modified for NSD.
 AC_DEFUN([CHECK_SSL], [
-    AC_ARG_WITH(ssl, AC_HELP_STRING([--with-ssl=pathname],
-                [enable SSL (will check /usr/local/ssl
+    AC_ARG_WITH(ssl, AS_HELP_STRING([--with-ssl=pathname],[enable SSL (will check /usr/local/ssl
                 /usr/lib/ssl /usr/ssl /usr/pkg /usr/sfw /usr/local /usr /usr/local/opt/openssl)]),[
         ],[
             withval="yes"
         ])
     if test x_$withval != x_no; then
         AC_MSG_CHECKING(for SSL)
+	if test -n "$withval"; then
+        	dnl look for openssl install with different version, eg.
+                dnl in /usr/include/openssl11/openssl/ssl.h
+                dnl and /usr/lib64/openssl11/libssl.so
+                dnl with the --with-ssl=/usr/include/openssl11
+                if test ! -f "$withval/include/openssl/ssl.h" -a -f "$withval/openssl/ssl.h"; then
+                        ssldir="$withval"
+                        found_ssl="yes"
+                        withval=""
+                        ssldir_include="$ssldir"
+                        CPPFLAGS="$CPPFLAGS -I$ssldir_include";
+                        dnl find the libdir
+                        ssldir_lib=`echo $ssldir | sed -e 's/include/lib/'`
+                        if test -f "$ssldir_lib/libssl.a" -o -f "$ssldir_lib/libssl.so"; then
+                                : # found here
+                        else
+                                ssldir_lib=`echo $ssldir | sed -e 's/include/lib64/'`
+                                if test -f "$ssldir_lib/libssl.a" -o -f "$ssldir_lib/libssl.so"; then
+                                        : # found here
+                                else
+                                        AC_MSG_ERROR([Could not find openssl lib file, $ssldir_lib/libssl.[so,a], pass like "/usr/local" or "/usr/include/openssl11"])
+                                fi
+                        fi
+                fi
+	fi
         if test x_$withval = x_ -o x_$withval = x_yes; then
             withval="/usr/local/ssl /usr/lib/ssl /usr/ssl /usr/pkg /usr/sfw /usr/local /usr /usr/local/opt/openssl"
         fi
@@ -370,23 +401,29 @@ AC_DEFUN([CHECK_SSL], [
             ssldir="$dir"
             if test -f "$dir/include/openssl/ssl.h"; then
                 found_ssl="yes";
-                AC_DEFINE_UNQUOTED([HAVE_SSL], [], [Define if you have the SSL libraries installed.])
                 if test x_$ssldir != x_/usr; then
                     CPPFLAGS="$CPPFLAGS -I$ssldir/include";
                 fi
+		ssldir_include="$ssldir/include"
+		if test ! -d "$ssldir/lib" -a -d "$ssldir/lib64"; then
+			ssldir_lib="$ssldir/lib64"
+		else
+			ssldir_lib="$ssldir/lib"
+		fi
                 break;
             fi
         done
         if test x_$found_ssl != x_yes; then
-            AC_MSG_ERROR(Cannot find the SSL libraries in $withval)
+            AC_MSG_ERROR([Cannot find the SSL libraries in $withval])
         else
-            AC_MSG_RESULT(found in $ssldir)
+            AC_MSG_RESULT([found in $ssldir])
             HAVE_SSL=yes
+            AC_DEFINE_UNQUOTED([HAVE_SSL], [], [Define if you have the SSL libraries installed.])
             if test x_$ssldir != x_/usr; then
-                LDFLAGS="$LDFLAGS -L$ssldir/lib";
+                LDFLAGS="$LDFLAGS -L$ssldir_lib";
             fi
 	    if test x_$ssldir = x_/usr/sfw; then
-		LDFLAGS="$LDFLAGS -R$ssldir/lib";
+		LDFLAGS="$LDFLAGS -R$ssldir_lib";
 	    fi
         fi
         AC_SUBST(HAVE_SSL)
@@ -394,8 +431,7 @@ AC_DEFUN([CHECK_SSL], [
 ])dnl
 
 # check for libevent
-AC_ARG_WITH(libevent, AC_HELP_STRING([--with-libevent=pathname],
-    [use libevent (will check /usr/local /opt/local /usr/lib /usr/pkg /usr/sfw /usr /usr/local/opt/libevent or you can specify an explicit path), useful when the zone count is high.]),
+AC_ARG_WITH(libevent, AS_HELP_STRING([--with-libevent=pathname],[use libevent (will check /usr/local /opt/local /usr/lib /usr/pkg /usr/sfw /usr /usr/local/opt/libevent or you can specify an explicit path), useful when the zone count is high.]),
     [ ],[ withval="yes" ])
 if test x_$withval = x_yes -o x_$withval != x_no; then
         AC_MSG_CHECKING(for libevent)
@@ -463,9 +499,8 @@ else
 fi
 
 # Checks for header files.
-AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS([time.h arpa/inet.h signal.h string.h strings.h fcntl.h limits.h netinet/in.h netinet/tcp.h stddef.h sys/param.h sys/socket.h sys/un.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h tcpd.h glob.h grp.h endian.h sys/random.h])
+AC_CHECK_HEADERS([time.h arpa/inet.h signal.h string.h strings.h fcntl.h limits.h netinet/in.h netinet/tcp.h stddef.h sys/param.h sys/socket.h sys/un.h syslog.h unistd.h sys/select.h stdarg.h stdint.h netdb.h sys/bitypes.h tcpd.h glob.h grp.h endian.h sys/random.h ifaddrs.h],,, [AC_INCLUDES_DEFAULT])
 
 AC_DEFUN([CHECK_VALIST_DEF],
 [
@@ -562,7 +597,7 @@ fi
 if test "$srcdir" != "."; then
 	CPPFLAGS="$CPPFLAGS -I$srcdir"
 	if test -f $srcdir/config.h; then
-		AC_ERROR([$srcdir/config.h is in the way, please remove it])
+		AC_MSG_ERROR([$srcdir/config.h is in the way, please remove it])
 	fi
 fi
 
@@ -574,18 +609,15 @@ dnl systems to get some types.
 
 dnl AC_LIBGTOP_CHECK_TYPE(TYPE, DEFAULT)
 AC_DEFUN([AC_LIBGTOP_CHECK_TYPE],
-[AC_REQUIRE([AC_HEADER_STDC])dnl
-AC_MSG_CHECKING(for $1)
+[AC_MSG_CHECKING(for $1)
 AC_CACHE_VAL(ac_cv_type_$1,
 [AC_EGREP_CPP(dnl
 changequote(<<,>>)dnl
 <<(^|[^a-zA-Z_0-9])$1[^a-zA-Z_0-9]>>dnl
 changequote([,]), [
 #include <sys/types.h>
-#if STDC_HEADERS
 #include <stdlib.h>
 #include <stddef.h>
-#endif
 
 #ifdef HAVE_STDINT_H
 #include <stdint.h>
@@ -647,21 +679,21 @@ AC_INCLUDES_DEFAULT
 AC_FUNC_CHOWN
 AC_FUNC_FORK
 AC_FUNC_MALLOC
-AC_TYPE_SIGNAL
+AC_DEFINE(RETSIGTYPE,void,[Return type of signal handlers, but autoconf 2.70 says 'your code may safely assume C89 semantics that RETSIGTYPE is void.'])
 AC_FUNC_FSEEKO
 AC_SYS_LARGEFILE
 AC_CHECK_SIZEOF(void*)
 AC_CHECK_SIZEOF(off_t)
 AC_CHECK_FUNCS([getrandom arc4random arc4random_uniform])
-AC_SEARCH_LIBS([setusercontext],[util],[AC_CHECK_HEADERS([login_cap.h])])
-AC_CHECK_FUNCS([tzset alarm chroot dup2 endpwent gethostname memset memcpy pwrite socket strcasecmp strchr strdup strerror strncasecmp strtol writev getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask strptime strftime localtime_r setusercontext glob initgroups setresuid setreuid setresgid setregid getpwnam mmap ppoll clock_gettime accept4])
+AC_SEARCH_LIBS([setusercontext],[util],[AC_CHECK_HEADERS([login_cap.h],,, [AC_INCLUDES_DEFAULT])])
+AC_CHECK_FUNCS([tzset alarm chroot dup2 endpwent gethostname memset memcpy pwrite socket strcasecmp strchr strdup strerror strncasecmp strtol writev getaddrinfo getnameinfo freeaddrinfo gai_strerror sigaction sigprocmask strptime strftime localtime_r setusercontext glob initgroups setresuid setreuid setresgid setregid getpwnam mmap ppoll clock_gettime accept4 getifaddrs])
 
 AC_CHECK_TYPE([struct mmsghdr], AC_DEFINE(HAVE_MMSGHDR, 1, [If sys/socket.h has a struct mmsghdr.]), [], [
 AC_INCLUDES_DEFAULT
 #include <sys/socket.h>
 ])
 
-AC_ARG_ENABLE(recvmmsg, AC_HELP_STRING([--enable-recvmmsg], [Enable recvmmsg and sendmmsg compilation, faster but some kernel versions may have implementation problems for IPv6]))
+AC_ARG_ENABLE(recvmmsg, AS_HELP_STRING([--enable-recvmmsg],[Enable recvmmsg and sendmmsg compilation, faster but some kernel versions may have implementation problems for IPv6]))
 case "$enable_recvmmsg" in
         yes)
 		AC_CHECK_FUNC([recvmmsg], [
@@ -713,7 +745,7 @@ if echo $target_os | $EGREP -i 'linux|hurd' > /dev/null; then
 fi
 
 # see comment on _GNU_SOURCE above
-AC_CHECK_HEADERS([sched.h sys/cpuset.h])
+AC_CHECK_HEADERS([sched.h sys/cpuset.h],,, [AC_INCLUDES_DEFAULT])
 
 # Check for cpu_set_t (Linux) and cpuset_t (FreeBSD and NetBSD)
 AC_CHECK_TYPES([cpu_set_t, cpuset_t, cpuid_t],,,[
@@ -729,8 +761,7 @@ AC_INCLUDES_DEFAULT
 AC_DEFUN([AC_CHECK_CPU_OR],
 [AC_REQUIRE([AC_PROG_CC])
 AC_MSG_CHECKING(whether CPU_OR works with three arguments)
-AC_TRY_COMPILE(
-[#ifdef HAVE_SCHED_H
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#ifdef HAVE_SCHED_H
 # include <sched.h>
 #endif
 #ifdef HAVE_SYS_CPUSET_H
@@ -748,12 +779,12 @@ void testing (void) {
 	memset(&a, 0, sizeof(a));
 	memset(&b, 0, sizeof(b));
 	CPU_OR(&a, &a, &b);
-}], [
+}]], [[
         testing();
-], [
+]])],[
 	AC_MSG_RESULT(yes)
 	AC_DEFINE([CPU_OR_THREE_ARGS], 1, [number of arguments for CPU_OR is three])
-], [
+],[
 	AC_MSG_RESULT(no)
 ])])
 
@@ -816,6 +847,7 @@ AC_REPLACE_FUNCS(b64_ntop)
 AC_REPLACE_FUNCS(pselect)
 AC_REPLACE_FUNCS(memmove)
 AC_REPLACE_FUNCS(setproctitle)
+AC_REPLACE_FUNCS(explicit_bzero)
 AC_MSG_CHECKING([for reallocarray])
 AC_LINK_IFELSE([AC_LANG_SOURCE(
 [[
@@ -872,7 +904,7 @@ AC_DEFINE_UNQUOTED([TCP_PORT], ["53"], [Define to the default tcp port.])
 AC_DEFINE_UNQUOTED([TCP_MAX_MESSAGE_LEN], [65535], [Define to the default maximum message length.])
 AC_DEFINE_UNQUOTED([UDP_PORT], ["53"], [Define to the default udp port.])
 AC_DEFINE_UNQUOTED([UDP_MAX_MESSAGE_LEN], [512], [Define to the default maximum udp message length.])
-AC_DEFINE_UNQUOTED([EDNS_MAX_MESSAGE_LEN], [4096], [Define to the default maximum message length with EDNS.])
+AC_DEFINE_UNQUOTED([EDNS_MAX_MESSAGE_LEN], [1232], [Define to the default maximum message length with EDNS.])
 AC_DEFINE_UNQUOTED([TLS_PORT], ["853"], [Define to the default DNS over TLS port.])
 AC_DEFINE_UNQUOTED([MAXSYSLOGMSGLEN], [512], [Define to the maximum message length to pass to syslog.])
 AC_DEFINE_UNQUOTED([NSD_CONTROL_PORT], [8952], [Define to the default nsd-control port.])
@@ -884,7 +916,7 @@ dnl Determine the syslog facility to use
 dnl
 facility=LOG_DAEMON
 AC_ARG_WITH([facility],
-        AC_HELP_STRING([--with-facility=name], [Syslog default facility (LOG_DAEMON)]),
+        AS_HELP_STRING([--with-facility=name],[Syslog default facility (LOG_DAEMON)]),
         [facility=$withval])
 AC_DEFINE_UNQUOTED([FACILITY], $facility, [Define to the default facility for syslog.])
 
@@ -893,14 +925,14 @@ dnl Determine the default tcp timeout
 dnl
 tcp_timeout=120
 AC_ARG_WITH([tcp_timeout],
-	AC_HELP_STRING([--with-tcp-timeout=number], [Limit the default tcp timeout]),
+	AS_HELP_STRING([--with-tcp-timeout=number],[Limit the default tcp timeout]),
 	[tcp_timeout=$withval])
 AC_DEFINE_UNQUOTED([TCP_TIMEOUT], $tcp_timeout, [Define to the default tcp timeout.])
 
 dnl
 dnl Features
 dnl
-AC_ARG_ENABLE(root-server, AC_HELP_STRING([--enable-root-server], [Configure NSD as a root server]))
+AC_ARG_ENABLE(root-server, AS_HELP_STRING([--enable-root-server],[Configure NSD as a root server]))
 case "$enable_root_server" in
         yes)
 		AC_DEFINE_UNQUOTED([ROOT_SERVER], [], [Define this to configure as a root server.])
@@ -909,7 +941,7 @@ case "$enable_root_server" in
                 ;;
 esac
 
-AC_ARG_ENABLE(ipv6, AC_HELP_STRING([--disable-ipv6], [Disables IPv6 support]))
+AC_ARG_ENABLE(ipv6, AS_HELP_STRING([--disable-ipv6],[Disables IPv6 support]))
 case "$enable_ipv6" in
         no)
                 ;;
@@ -918,7 +950,7 @@ case "$enable_ipv6" in
 		;;
 esac
 
-AC_ARG_ENABLE(bind8-stats, AC_HELP_STRING([--enable-bind8-stats], [Enables BIND8 like NSTATS & XSTATS and statistics in nsd-control]))
+AC_ARG_ENABLE(bind8-stats, AS_HELP_STRING([--enable-bind8-stats],[Enables BIND8 like NSTATS & XSTATS and statistics in nsd-control]))
 
 case "$enable_bind8_stats" in
 	yes|'')
@@ -928,7 +960,7 @@ case "$enable_bind8_stats" in
 		;;
 esac
 
-AC_ARG_ENABLE(zone-stats, AC_HELP_STRING([--enable-zone-stats], [Enable per-zone statistics gathering (needs --enable-bind8-stats)]))
+AC_ARG_ENABLE(zone-stats, AS_HELP_STRING([--enable-zone-stats],[Enable per-zone statistics gathering (needs --enable-bind8-stats)]))
 case "$enable_zone_stats" in
 	yes)
 		AC_DEFINE_UNQUOTED([USE_ZONE_STATS], [], [Define this to enable per-zone statistics gathering.])
@@ -938,7 +970,7 @@ case "$enable_zone_stats" in
 		;;
 esac
 
-AC_ARG_ENABLE(checking, AC_HELP_STRING([--enable-checking], [Enable internal runtime checks]))
+AC_ARG_ENABLE(checking, AS_HELP_STRING([--enable-checking],[Enable internal runtime checks]))
 case "$enable_checking" in
         yes)
 		CHECK_COMPILER_FLAG(W, [ CFLAGS="$CFLAGS -W" ])
@@ -951,11 +983,11 @@ case "$enable_checking" in
                 ;;
 esac
 
-AC_ARG_ENABLE(memclean, AC_HELP_STRING([--enable-memclean], [Cleanup memory (at exit) for eg. valgrind, memcheck]))
+AC_ARG_ENABLE(memclean, AS_HELP_STRING([--enable-memclean],[Cleanup memory (at exit) for eg. valgrind, memcheck]))
 if test "$enable_memclean" = "yes"; then AC_DEFINE_UNQUOTED([MEMCLEAN], [1], [Define this to cleanup memory at exit (eg. for valgrind, etc.)])
 fi
 
-AC_ARG_ENABLE(ratelimit, AC_HELP_STRING([--enable-ratelimit], [Enable rate limiting]))
+AC_ARG_ENABLE(ratelimit, AS_HELP_STRING([--enable-ratelimit],[Enable rate limiting]))
 case "$enable_ratelimit" in
 	yes)
 		AC_DEFINE_UNQUOTED([RATELIMIT], [], [Define this to enable rate limiting.])
@@ -968,7 +1000,7 @@ case "$enable_ratelimit" in
 esac
 AC_SUBST(ratelimit)
 
-AC_ARG_ENABLE(ratelimit-default-is-off, AC_HELP_STRING([--enable-ratelimit-default-is-off], [Enable this to set default of ratelimit to off (enable in nsd.conf), otherwise ratelimit is enabled by default if --enable-ratelimit is enabled]))
+AC_ARG_ENABLE(ratelimit-default-is-off, AS_HELP_STRING([--enable-ratelimit-default-is-off],[Enable this to set default of ratelimit to off (enable in nsd.conf), otherwise ratelimit is enabled by default if --enable-ratelimit is enabled]))
 case "$enable_ratelimit_default_is_off" in
 	yes)
 		AC_DEFINE_UNQUOTED([RATELIMIT_DEFAULT_OFF], [], [Define this to set ratelimit to off by default.])
@@ -984,19 +1016,21 @@ AC_SUBST(ratelimit_default)
 CHECK_SSL
 if test x$HAVE_SSL = x"yes"; then
 	ACX_LIB_SSL
+	# remove space after -ldl if there.
+	LIBS=`echo "$LIBS" | sed -e 's/ $//'`
 
 	# Check for -pthread
 	BAKLIBS="$LIBS"
 	LIBS="-lcrypto $LIBS"
-	AC_TRY_LINK([], [
-		int HMAC_Update(void);
-		(void)HMAC_Update();
-	], [],[
-		dnl so link fails for HMAC_Update, try with -pthread.
+	AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [[
+		int EVP_sha256(void);
+		(void)EVP_sha256();
+	]])],[],[
+		dnl so link fails for EVP_sha256, try with -pthread.
 		BAKCFLAGS="$CFLAGS"
 		CFLAGS="$CFLAGS -pthread"
 		AC_MSG_CHECKING([if libcrypto needs -pthread])
-		AC_TRY_LINK_FUNC([HMAC_Update], [
+		AC_TRY_LINK_FUNC([EVP_sha256], [
 			AC_MSG_RESULT([yes])
 		] , [
 			AC_MSG_RESULT([no])
@@ -1007,14 +1041,19 @@ if test x$HAVE_SSL = x"yes"; then
 	LIBS="$BAKLIBS"
 
 	if test -n "$ssldir"; then
-            AC_CHECK_LIB(crypto, HMAC_Update,, [
+            AC_CHECK_LIB(crypto, EVP_sha256,, [
                     AC_MSG_ERROR([OpenSSL found in $ssldir, but version 0.9.7 or higher is required])
                 ])
 	fi
 	SSL_LIBS="-lssl"
 	AC_SUBST(SSL_LIBS)
-	AC_CHECK_HEADERS([openssl/ssl.h openssl/err.h openssl/rand.h openssl/ocsp.h],,, [AC_INCLUDES_DEFAULT])
-	AC_CHECK_FUNCS([HMAC_CTX_reset HMAC_CTX_new EVP_cleanup ERR_load_crypto_strings OPENSSL_init_crypto SSL_CTX_set_security_level CRYPTO_memcmp EC_KEY_new_by_curve_name])
+	AC_CHECK_HEADERS([openssl/ssl.h openssl/err.h openssl/rand.h openssl/ocsp.h openssl/core_names.h],,, [AC_INCLUDES_DEFAULT])
+	AC_CHECK_FUNCS([HMAC_CTX_reset HMAC_CTX_new EVP_cleanup ERR_load_crypto_strings OPENSSL_init_crypto CRYPTO_memcmp EC_KEY_new_by_curve_name EVP_MAC_CTX_new EVP_MAC_CTX_set_params EVP_MAC_CTX_get_mac_size SHA1_Init])
+	if test "$ac_cv_func_SHA1_Init" = "yes"; then
+		ACX_FUNC_DEPRECATED([SHA1_Init], [(void)SHA1_Init(NULL);], [
+#include <openssl/sha.h>
+])
+	fi
 	AC_CHECK_DECLS([SSL_CTX_set_ecdh_auto,SSL_CTX_set_tmp_ecdh], [], [], [
 AC_INCLUDES_DEFAULT
 #ifdef HAVE_OPENSSL_ERR_H
@@ -1035,11 +1074,18 @@ AC_INCLUDES_DEFAULT
 #include <openssl/ssl.h>
 #include <openssl/evp.h>
 ])
-
+	AC_CHECK_DECL([TLS1_3_VERSION], 
+		[AC_DEFINE([HAVE_TLS_1_3], [1], [Define if TLS 1.3 is supported by OpenSSL])],
+		[AC_MSG_WARN([No TLS 1.3, therefore XFR-over-TLS is disabled])], [[#include <openssl/ssl.h>]])
 
 	BAKLIBS="$LIBS"
 	LIBS="-lssl $LIBS"
-	AC_CHECK_FUNCS([OPENSSL_init_ssl])
+	AC_CHECK_FUNCS([OPENSSL_init_ssl SSL_get1_peer_certificate SSL_CTX_set_security_level ERR_load_SSL_strings])
+	if test "$ac_cv_func_ERR_load_SSL_strings" = "yes"; then
+		ACX_FUNC_DEPRECATED([ERR_load_SSL_strings], [(void)ERR_load_SSL_strings();], [
+#include <openssl/ssl.h>
+])
+	fi
 	LIBS="$BAKLIBS"
 
 else
@@ -1047,7 +1093,7 @@ else
 	AC_MSG_WARN([No SSL, therefore TLS is disabled])
 fi
 
-AC_ARG_ENABLE(nsec3, AC_HELP_STRING([--disable-nsec3], [Disable NSEC3 support]))
+AC_ARG_ENABLE(nsec3, AS_HELP_STRING([--disable-nsec3],[Disable NSEC3 support]))
 case "$enable_nsec3" in
         no)
 		;;
@@ -1063,7 +1109,7 @@ case "$enable_nsec3" in
                 ;;
 esac
 
-AC_ARG_ENABLE(minimal-responses, AC_HELP_STRING([--disable-minimal-responses], [Disable response minimization. More truncation.]))
+AC_ARG_ENABLE(minimal-responses, AS_HELP_STRING([--disable-minimal-responses],[Disable response minimization. More truncation.]))
 case "$enable_minimal_responses" in
         no)
 		;;
@@ -1072,10 +1118,10 @@ case "$enable_minimal_responses" in
                 ;;
 esac
 
-AC_ARG_ENABLE(mmap, AC_HELP_STRING([--enable-mmap], [Use mmap instead of malloc. Experimental.]))
+AC_ARG_ENABLE(mmap, AS_HELP_STRING([--enable-mmap],[Use mmap instead of malloc. Experimental.]))
 case "$enable_mmap" in
         yes)
-		AC_CHECK_HEADERS([sys/mman.h])
+		AC_CHECK_HEADERS([sys/mman.h],,, [AC_INCLUDES_DEFAULT])
 		AC_LIBGTOP_CHECK_TYPE(uintptr_t, void*)
 		AC_CHECK_FUNCS([mmap munmap])
 		AC_DEFINE_UNQUOTED([USE_MMAP_ALLOC], [], [Define this to enable mmap instead of malloc. Experimental.])
@@ -1084,7 +1130,7 @@ case "$enable_mmap" in
                 ;;
 esac
 
-AC_ARG_ENABLE(radix-tree, AC_HELP_STRING([--disable-radix-tree], [You can disable the radix tree and use the red-black tree for the main lookups, the red-black tree uses less memory, but uses some more CPU.]))
+AC_ARG_ENABLE(radix-tree, AS_HELP_STRING([--disable-radix-tree],[You can disable the radix tree and use the red-black tree for the main lookups, the red-black tree uses less memory, but uses some more CPU.]))
 case "$enable_radix_tree" in
         no)
 	;;
@@ -1093,7 +1139,7 @@ case "$enable_radix_tree" in
 	;;
 esac
 
-AC_ARG_ENABLE(packed, AC_HELP_STRING([--enable-packed], [Enable packed structure alignment, uses less memory, but unaligned reads.]))
+AC_ARG_ENABLE(packed, AS_HELP_STRING([--enable-packed],[Enable packed structure alignment, uses less memory, but unaligned reads.]))
 case "$enable_packed" in
 	yes)
 	AC_DEFINE_UNQUOTED([PACKED_STRUCTS], [], [Define this to use packed structure alignment.])
@@ -1127,7 +1173,7 @@ dt_DNSTAP([${localstatedir}/run/nsd-dnstap.sock],
 sinclude(systemd.m4)
 # Include systemd.m4 - end
 
-AC_ARG_ENABLE(tcp-fastopen, AC_HELP_STRING([--enable-tcp-fastopen], [Enable TCP Fast Open]))
+AC_ARG_ENABLE(tcp-fastopen, AS_HELP_STRING([--enable-tcp-fastopen],[Enable TCP Fast Open]))
 case "$enable_tcp_fastopen" in
        yes)
              AC_CHECK_DECL([TCP_FASTOPEN], [], [AC_MSG_ERROR([TCP Fast Open is not available: please rerun without --enable-tcp-fastopen])], [AC_INCLUDES_DEFAULT
@@ -1182,10 +1228,8 @@ AH_BOTTOM([
 
 AH_BOTTOM([
 #include <sys/types.h>
-#if STDC_HEADERS
 #include <stdlib.h>
 #include <stddef.h>
-#endif
 
 #ifdef HAVE_TIME_H
 #include <time.h>
@@ -1281,6 +1325,10 @@ int inet_aton(const char *cp, struct in_addr *addr);
 #ifndef HAVE_MEMMOVE
 void *memmove(void *dest, const void *src, size_t n);
 #endif
+#ifndef HAVE_EXPLICIT_BZERO
+#define explicit_bzero nsd_explicit_bzero
+void explicit_bzero(void* buf, size_t len);
+#endif
 #ifndef HAVE_STRLCAT
 size_t strlcat(char *dst, const char *src, size_t siz);
 #endif
@@ -1309,7 +1357,7 @@ char *nsd_strptime(const char *s, const char *format, struct tm *tm);
 #ifdef __linux__
 #define HAVE_SETPROCTITLE 1
 #include <stdarg.h>
-void setproctitle(char *fmt, ...);
+void setproctitle(const char *fmt, ...);
 #endif
 #endif
 ])

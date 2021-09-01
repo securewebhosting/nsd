@@ -87,9 +87,9 @@ struct query {
 
 	/*
 	 * The number of CNAMES followed.  After a CNAME is followed
-	 * we no longer change the RCODE to NXDOMAIN and no longer add
-	 * SOA records to the authority section in case of NXDOMAIN
-	 * and NODATA.
+	 * we no longer clear AA for a delegation and do not REFUSE
+	 * or SERVFAIL if the destination zone of the CNAME does not exist,
+	 * or is configured but not present.
 	 * Also includes number of DNAMES followed.
 	 */
 	int cname_count;
@@ -184,7 +184,7 @@ void query_reset(query_type *query, size_t maxlen, int is_tcp);
 /*
  * Process a query and write the response in the query I/O buffer.
  */
-query_state_type query_process(query_type *q, nsd_type *nsd);
+query_state_type query_process(query_type *q, nsd_type *nsd, uint32_t *now_p);
 
 /*
  * Prepare the query structure for writing the response. The packet
@@ -197,7 +197,7 @@ void query_prepare_response(query_type *q);
 /*
  * Add EDNS0 information to the response if required.
  */
-void query_add_optional(query_type *q, nsd_type *nsd);
+void query_add_optional(query_type *q, nsd_type *nsd, uint32_t *now_p);
 
 /*
  * Write an error response into the query structure with the indicated

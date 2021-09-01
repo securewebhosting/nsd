@@ -395,13 +395,13 @@ try_read_udb(namedb_type* db, int fd, const char* filename,
 	if(!(db->udb=udb_base_create_fd(filename, fd, &namedb_walkfunc,
 		NULL))) {
 		/* fd is closed by failed udb create call */
-		VERBOSITY(1, (LOG_WARNING, "can not use %s, "
+		VERBOSITY(1, (LOG_ERR, "can not use %s, "
 			"will create anew", filename));
 		return 0;
 	}
 	/* sanity check if can be opened */
 	if(udb_base_get_userflags(db->udb) != 0) {
-		log_msg(LOG_WARNING, "%s was not closed properly, it might "
+		log_msg(LOG_ERR, "%s was not closed properly, it might "
 			"be corrupted, will create anew", filename);
 		udb_base_free(db->udb);
 		db->udb = NULL;
@@ -534,8 +534,17 @@ namedb_read_zonefile(struct nsd* nsd, struct zone* zone, udb_base* taskudb,
 	assert(fname);
 	if(!file_get_mtime(fname, &mtime, &nonexist)) {
 		if(nonexist) {
-			VERBOSITY(2, (LOG_INFO, "zonefile %s does not exist",
-				fname));
+			if(zone_is_slave(zone->opts)) {
+				/* for slave zones not as bad, no zonefile
+				 * may just mean we have to transfer it */
+				VERBOSITY(2, (LOG_INFO, "zonefile %s does not exist",
+					fname));
+			} else {
+				/* without a download option, we can never
+				 * serve data, more severe error printout */
+				log_msg(LOG_ERR, "zonefile %s does not exist", fname);
+			}
+
 		} else
 			log_msg(LOG_ERR, "zonefile %s: %s",
 				fname, strerror(errno));

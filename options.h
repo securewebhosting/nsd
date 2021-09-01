@@ -10,7 +10,6 @@
 #ifndef OPTIONS_H
 #define OPTIONS_H
 
-#include "config.h"
 #include <stdarg.h>
 #include "region-allocator.h"
 #include "rbtree.h"
@@ -29,6 +28,7 @@ typedef struct cpu_option cpu_option_type;
 typedef struct cpu_map_option cpu_map_option_type;
 typedef struct acl_options acl_options_type;
 typedef struct key_options key_options_type;
+typedef struct tls_auth_options tls_auth_options_type;
 typedef struct config_parser_state config_parser_state_type;
 
 #define VERIFY_ZONE_INHERIT (2)
@@ -63,6 +63,9 @@ struct nsd_options {
 
 	/* rbtree of keys defined, by name */
 	rbtree_type* keys;
+
+	/* rbtree of tls_auth defined, by name */
+	rbtree_type* tls_auths;
 
 	/* list of ip addresses to bind to (or NULL for all) */
 	struct ip_address_option* ip_addresses;
@@ -122,6 +125,8 @@ struct nsd_options {
 	char* tls_service_pem;
 	/* TLS dedicated port */
 	const char* tls_port;
+	/* TLS certificate bundle */
+	const char* tls_cert_bundle;
 
 	/** remote control section. enable toggle. */
 	int control_enable;
@@ -167,6 +172,13 @@ struct nsd_options {
 	int dnstap_log_auth_query_messages;
 	/** true to log dnstap AUTH_RESPONSE message events */
 	int dnstap_log_auth_response_messages;
+
+	/** do answer with server cookie when request contained cookie option */
+	int answer_cookie;
+	/** cookie secret */
+	char *cookie_secret;
+	/** path to cookie secret store */
+	char const* cookie_secret_file;
 
 	/** enable verify */
 	int verify_enable;
@@ -214,6 +226,17 @@ struct cpu_map_option {
 };
 
 /*
+ * Defines for min_expire_time_expr value
+ */
+#define EXPIRE_TIME_HAS_VALUE     0
+#define EXPIRE_TIME_IS_DEFAULT    1
+#define REFRESHPLUSRETRYPLUS1     2
+#define REFRESHPLUSRETRYPLUS1_STR "refresh+retry+1"
+#define expire_time_is_default(x) (!(  (x) == REFRESHPLUSRETRYPLUS1 \
+                                    || (x) == EXPIRE_TIME_HAS_VALUE ))
+
+
+/*
  * Pattern of zone options, used to contain options for zone(s).
  */
 struct pattern_options {
@@ -224,6 +247,7 @@ struct pattern_options {
 	struct acl_options* request_xfr;
 	struct acl_options* notify;
 	struct acl_options* provide_xfr;
+	struct acl_options* allow_query;
 	struct acl_options* outgoing_interface;
 	const char* zonestats;
 #ifdef RATELIMIT
@@ -243,6 +267,12 @@ struct pattern_options {
 	uint8_t max_retry_time_is_default;
 	uint32_t min_retry_time;
 	uint8_t min_retry_time_is_default;
+	uint32_t min_expire_time;
+	/* min_expir_time_expr is either a known value (REFRESHPLUSRETRYPLUS1
+	 * or EXPIRE_EXPR_HAS_VALUE) or else min_expire_time is the default.
+	 * This can be tested with expire_time_is_default(x) define.
+	 */
+	uint8_t min_expire_time_expr;
 	uint64_t size_limit_xfr;
 	uint8_t multi_master_check;
 	uint8_t verify_zone;
@@ -314,6 +344,10 @@ struct acl_options {
 	uint8_t blocked;
 	const char* key_name;
 	struct key_options* key_options;
+
+	/* tls_auth for XoT */
+	const char* tls_auth_name;
+	struct tls_auth_options* tls_auth_options;
 } ATTR_PACKED;
 
 /*
@@ -326,6 +360,18 @@ struct key_options {
 	char* secret;
 	struct tsig_key* tsig_key;
 } ATTR_PACKED;
+
+/*
+ * TLS Auth definition for XoT
+ */
+struct tls_auth_options {
+	rbnode_type node; /* key of tree is name */
+	char* name;
+	char* auth_domain_name;
+	char* client_cert;
+	char* client_key;
+	char* client_key_pw;
+};
 
 /** zone list free space */
 struct zonelist_free {
@@ -359,6 +405,7 @@ struct config_parser_state {
 	struct pattern_options *pattern;
 	struct zone_options *zone;
 	struct key_options *key;
+	struct tls_auth_options *tls_auth;
 	struct ip_address_option *ip;
 	void (*err)(void*,const char*);
 	void* err_arg;
@@ -403,6 +450,10 @@ int key_options_equal(struct key_options* p, struct key_options* q);
 void key_options_add_modify(struct nsd_options* opt, struct key_options* key);
 void key_options_setup(region_type* region, struct key_options* key);
 void key_options_desetup(region_type* region, struct key_options* key);
+/* TLS auth */
+struct tls_auth_options* tls_auth_options_create(region_type* region);
+void tls_auth_options_insert(struct nsd_options* opt, struct tls_auth_options* auth);
+struct tls_auth_options* tls_auth_options_find(struct nsd_options* opt, const char* name);
 /* read in zone list file. Returns false on failure */
 int parse_zone_list_file(struct nsd_options* opt);
 /* create zone entry and add to the zonelist file */
@@ -479,5 +530,13 @@ void nsd_options_destroy(struct nsd_options* opt);
 void replace_str(char* buf, size_t len, const char* one, const char* two);
 /* apply pattern to the existing pattern in the parser */
 void config_apply_pattern(struct pattern_options *dest, const char* name);
+/* if the file is a directory, print a warning, because flex just exit()s
+ * when a fileread fails because it is a directory, helps the user figure
+ * out what just happened */
+void warn_if_directory(const char* filetype, FILE* f, const char* fname);
+/* resolve interface names in the options "ip-address:" (or "interface:")
+ * and "control-interface:" into the ip-addresses associated with those
+ * names. */
+void resolve_interface_names(struct nsd_options* options);
 
 #endif /* OPTIONS_H */

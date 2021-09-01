@@ -25,6 +25,9 @@
 #include <login_cap.h>
 #endif /* HAVE_LOGIN_CAP_H */
 #endif /* HAVE_SETUSERCONTEXT */
+#ifdef HAVE_OPENSSL_RAND_H
+#include <openssl/rand.h>
+#endif
 
 #include <assert.h>
 #include <ctype.h>
@@ -41,7 +44,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef HAVE_IFADDRS_H
 #include <ifaddrs.h>
+#endif
 
 #include "nsd.h"
 #include "options.h"
@@ -113,6 +118,31 @@ version(void)
 {
 	fprintf(stderr, "%s version %s\n", PACKAGE_NAME, PACKAGE_VERSION);
 	fprintf(stderr, "Written by NLnet Labs.\n\n");
+	fprintf(stderr, "Configure line: %s\n", CONFCMDLINE);
+#ifdef USE_MINI_EVENT
+	fprintf(stderr, "Event loop: internal (uses select)\n");
+#else
+#  if defined(HAVE_EV_LOOP) || defined(HAVE_EV_DEFAULT_LOOP)
+	fprintf(stderr, "Event loop: %s %s (uses %s)\n",
+		"libev",
+		nsd_event_vs(),
+		nsd_event_method());
+#  else
+	fprintf(stderr, "Event loop: %s %s (uses %s)\n",
+		"libevent",
+		nsd_event_vs(),
+		nsd_event_method());
+#  endif
+#endif
+#ifdef HAVE_SSL
+	fprintf(stderr, "Linked with %s\n\n",
+#  ifdef SSLEAY_VERSION
+		SSLeay_version(SSLEAY_VERSION)
+#  else
+		OpenSSL_version(OPENSSL_VERSION)
+#  endif
+		);
+#endif
 	fprintf(stderr,
 		"Copyright (C) 2001-2020 NLnet Labs.  This is free software.\n"
 		"There is NO warranty; not even for MERCHANTABILITY or FITNESS\n"
@@ -192,26 +222,26 @@ setup_socket(
 	struct addrinfo *hints)
 {
 	int ret;
-	char *sep = NULL;
-	char *host, host_buf[INET6_ADDRSTRLEN + 1 /* '\0' */];
+	char *host;
+	char host_buf[sizeof("65535") + INET6_ADDRSTRLEN + 1 /* '\0' */];
 	const char *service;
-	char service_buf[6 + 1 /* '\0' */]; /* 65535 */
 	struct addrinfo *addr = NULL;
 
 	sock->fib = -1;
 	if(node) {
+		char *sep;
+
+		if (strlcpy(host_buf, node, sizeof(host_buf)) >= sizeof(host_buf)) {
+			error("cannot parse address '%s': %s", node,
+			    strerror(ENAMETOOLONG));
+		}
+
 		host = host_buf;
-		sep = strchr(node, '@');
-		if(sep) {
-			size_t len = (sep - node) + 1;
-			if (len > sizeof(host_buf)) {
-				len = sizeof(host_buf);
-			}
-			strlcpy(host_buf, node, len);
-			strlcpy(service_buf, sep + 1, sizeof(service_buf));
-			service = service_buf;
+		sep = strchr(host_buf, '@');
+		if(sep != NULL) {
+			*sep = '\0';
+			service = sep + 1;
 		} else {
-			strlcpy(host_buf, node, sizeof(host_buf));
 			service = port;
 		}
 	} else {
@@ -289,7 +319,6 @@ figure_default_sockets(
 	const char *node, const char *udp_port, const char *tcp_port,
 	const struct addrinfo *hints)
 {
-	int r;
 	size_t i = 0, n = 1;
 	struct addrinfo ai[2] = { *hints, *hints };
 
@@ -329,6 +358,7 @@ figure_default_sockets(
 		 * socket.
 		 */
 #ifdef IPV6_V6ONLY
+		int r;
 		struct addrinfo *addrs[2] = { NULL, NULL };
 
 		if((r = getaddrinfo(node, udp_port, &ai[0], &addrs[0])) == 0 &&
@@ -366,6 +396,7 @@ figure_default_sockets(
 	figure_socket_servers(&(*tcp)[i], NULL);
 }
 
+#ifdef HAVE_GETIFADDRS
 static int
 find_device(
 	struct nsd_socket *sock,
@@ -403,22 +434,18 @@ find_device(
 	}
 
 	if(ifa != NULL) {
-		char *colon;
-		size_t len;
-
-		if((colon = strchr(ifa->ifa_name, ':')) != NULL) {
-			len = (size_t)((uintptr_t)colon - (uintptr_t)ifa->ifa_name);
-		} else {
-			len  = strlen(ifa->ifa_name);
-		}
-		if (len < sizeof(sock->device)) {
-			strlcpy(sock->device, ifa->ifa_name, len);
+		size_t len = strlcpy(sock->device, ifa->ifa_name, sizeof(sock->device));
+		if(len < sizeof(sock->device)) {
+			char *colon = strchr(sock->device, ':');
+			if(colon != NULL)
+				*colon = '\0';
 			return 1;
 		}
 	}
 
 	return 0;
 }
+#endif /* HAVE_GETIFADDRS */
 
 static void
 figure_sockets(
@@ -430,7 +457,9 @@ figure_sockets(
 	size_t i = 0;
 	struct addrinfo ai = *hints;
 	struct ip_address_option *ip;
+#ifdef HAVE_GETIFADDRS
 	struct ifaddrs *ifa = NULL;
+#endif
 	int bind_device = 0;
 
 	if(!ips) {
@@ -445,9 +474,11 @@ figure_sockets(
 		bind_device |= (ip->dev != 0);
 	}
 
+#ifdef HAVE_GETIFADDRS
 	if(bind_device && getifaddrs(&ifa) == -1) {
 		error("getifaddrs failed: %s", strerror(errno));
 	}
+#endif
 
 	*udp = xalloc_zero((*ifs + 1) * sizeof(struct nsd_socket));
 	*tcp = xalloc_zero((*ifs + 1) * sizeof(struct nsd_socket));
@@ -466,6 +497,7 @@ figure_sockets(
 			(*udp)[i].fib = ip->fib;
 			(*tcp)[i].fib = ip->fib;
 		}
+#ifdef HAVE_GETIFADDRS
 		if(ip->dev != 0) {
 			(*udp)[i].flags |= NSD_BIND_DEVICE;
 			(*tcp)[i].flags |= NSD_BIND_DEVICE;
@@ -476,13 +508,16 @@ figure_sockets(
 				      ip->address);
 			}
 		}
+#endif
 	}
 
 	assert(i == *ifs);
 
+#ifdef HAVE_GETIFADDRS
 	if(ifa != NULL) {
 		freeifaddrs(ifa);
 	}
+#endif
 }
 
 /* print server affinity for given socket. "*" if socket has no affinity with
@@ -574,12 +609,12 @@ print_sockets(
 
 	for(i = 0; i < ifs; i++) {
 		assert(udp[i].servers->size == servercnt);
-		addrport2str(&udp[i].addr.ai_addr, sockbuf, sizeof(sockbuf));
+		addrport2str((void*)&udp[i].addr.ai_addr, sockbuf, sizeof(sockbuf));
 		print_socket_servers(&udp[i], serverbuf, serverbufsz);
 		nsd_bitset_or(servers, servers, udp[i].servers);
 		VERBOSITY(3, (LOG_NOTICE, fmt, sockbuf, "udp", serverbuf));
 		assert(tcp[i].servers->size == servercnt);
-		addrport2str(&tcp[i].addr.ai_addr, sockbuf, sizeof(sockbuf));
+		addrport2str((void*)&tcp[i].addr.ai_addr, sockbuf, sizeof(sockbuf));
 		print_socket_servers(&tcp[i], serverbuf, serverbufsz);
 		nsd_bitset_or(servers, servers, tcp[i].servers);
 		VERBOSITY(3, (LOG_NOTICE, fmt, sockbuf, "tcp", serverbuf));
@@ -650,26 +685,43 @@ readpid(const char *file)
 int
 writepid(struct nsd *nsd)
 {
-	FILE * fd;
+	int fd;
 	char pidbuf[32];
+	size_t count = 0;
 	if(!nsd->pidfile || !nsd->pidfile[0])
 		return 0;
 
 	snprintf(pidbuf, sizeof(pidbuf), "%lu\n", (unsigned long) nsd->pid);
 
-	if ((fd = fopen(nsd->pidfile, "w")) ==  NULL ) {
+	if((fd = open(nsd->pidfile, O_WRONLY | O_CREAT | O_TRUNC
+#ifdef O_NOFOLLOW
+		| O_NOFOLLOW
+#endif
+		, 0644)) == -1) {
 		log_msg(LOG_ERR, "cannot open pidfile %s: %s",
 			nsd->pidfile, strerror(errno));
 		return -1;
 	}
 
-	if (!write_data(fd, pidbuf, strlen(pidbuf))) {
-		log_msg(LOG_ERR, "cannot write pidfile %s: %s",
-			nsd->pidfile, strerror(errno));
-		fclose(fd);
-		return -1;
+	while(count < strlen(pidbuf)) {
+		ssize_t r = write(fd, pidbuf+count, strlen(pidbuf)-count);
+		if(r == -1) {
+			if(errno == EAGAIN || errno == EINTR)
+				continue;
+			log_msg(LOG_ERR, "cannot write pidfile %s: %s",
+				nsd->pidfile, strerror(errno));
+			close(fd);
+			return -1;
+		} else if(r == 0) {
+			log_msg(LOG_ERR, "cannot write any bytes to "
+				"pidfile %s: write returns 0 bytes written",
+				nsd->pidfile);
+			close(fd);
+			return -1;
+		}
+		count += r;
 	}
-	fclose(fd);
+	close(fd);
 
 	if (chown(nsd->pidfile, nsd->uid, nsd->gid) == -1) {
 		log_msg(LOG_ERR, "cannot chown %u.%u %s: %s",
@@ -692,13 +744,19 @@ unlinkpid(const char* file)
 		if (fd == -1) {
 			/* Truncate the pid file.  */
 			log_msg(LOG_ERR, "can not truncate the pid file %s: %s", file, strerror(errno));
-		} else 
+		} else {
 			close(fd);
+		}
 
 		/* unlink pidfile */
-		if (unlink(file) == -1)
-			log_msg(LOG_WARNING, "failed to unlink pidfile %s: %s",
-				file, strerror(errno));
+		if (unlink(file) == -1) {
+			/* this unlink may not work if the pidfile is located
+			 * outside of the chroot/workdir or we no longer
+			 * have permissions */
+			VERBOSITY(3, (LOG_WARNING,
+				"failed to unlink pidfile %s: %s",
+				file, strerror(errno)));
+		}
 	}
 }
 
@@ -828,6 +886,40 @@ bind8_stats (struct nsd *nsd)
 }
 #endif /* BIND8_STATS */
 
+static
+int cookie_secret_file_read(nsd_type* nsd) {
+	char secret[NSD_COOKIE_SECRET_SIZE * 2 + 2/*'\n' and '\0'*/];
+	char const* file = nsd->options->cookie_secret_file;
+	FILE* f;
+	int corrupt = 0;
+	size_t count;
+
+	assert( nsd->options->cookie_secret_file != NULL );
+	f = fopen(file, "r");
+	/* a non-existing cookie file is not an error */
+	if( f == NULL ) { return errno != EPERM; }
+	/* cookie secret file exists and is readable */
+	nsd->cookie_count = 0;
+	for( count = 0; count < NSD_COOKIE_HISTORY_SIZE; count++ ) {
+		size_t secret_len = 0;
+		ssize_t decoded_len = 0;
+		if( fgets(secret, sizeof(secret), f) == NULL ) { break; }
+		secret_len = strlen(secret);
+		if( secret_len == 0 ) { break; }
+		assert( secret_len <= sizeof(secret) );
+		secret_len = secret[secret_len - 1] == '\n' ? secret_len - 1 : secret_len;
+		if( secret_len != NSD_COOKIE_SECRET_SIZE * 2 ) { corrupt++; break; }
+		/* needed for `hex_pton`; stripping potential `\n` */
+		secret[secret_len] = '\0';
+		decoded_len = hex_pton(secret, nsd->cookie_secrets[count].cookie_secret,
+		                       NSD_COOKIE_SECRET_SIZE);
+		if( decoded_len != NSD_COOKIE_SECRET_SIZE ) { corrupt++; break; }
+		nsd->cookie_count++;
+	}
+	fclose(f);
+	return corrupt == 0;
+}
+
 extern char *optarg;
 extern int optind;
 
@@ -870,11 +962,14 @@ main(int argc, char *argv[])
 	nsd.chrootdir	= 0;
 	nsd.nsid 	= NULL;
 	nsd.nsid_len 	= 0;
+	nsd.cookie_count = 0;
 
 	nsd.child_count = 0;
 	nsd.maximum_tcp_count = 0;
 	nsd.current_tcp_count = 0;
 	nsd.file_rotation_ok = 0;
+
+	nsd.do_answer_cookie = 1;
 
 	/* Set up our default identity to gethostname(2) */
 	if (gethostname(hostname, MAXHOSTNAMELEN) == 0) {
@@ -1157,6 +1252,36 @@ main(int argc, char *argv[])
 #endif /* IPV6 MTU) */
 #endif /* defined(INET6) */
 
+	nsd.do_answer_cookie = nsd.options->answer_cookie;
+	if (nsd.cookie_count > 0)
+		; /* pass */
+
+	else if (nsd.options->cookie_secret) {
+		ssize_t len = hex_pton(nsd.options->cookie_secret,
+			nsd.cookie_secrets[0].cookie_secret, NSD_COOKIE_SECRET_SIZE);
+		if (len != NSD_COOKIE_SECRET_SIZE ) {
+			error("A cookie secret must be a "
+			      "128 bit hex string");
+		}
+		nsd.cookie_count = 1;
+	} else {
+		size_t j;
+		size_t const cookie_secret_len = NSD_COOKIE_SECRET_SIZE;
+		/* Calculate a new random secret */
+		srandom(getpid() ^ time(NULL));
+
+		for( j = 0; j < NSD_COOKIE_HISTORY_SIZE; j++) {
+#if defined(HAVE_SSL)
+			if (!RAND_status()
+			    || !RAND_bytes(nsd.cookie_secrets[j].cookie_secret, cookie_secret_len))
+#endif
+			for (i = 0; i < cookie_secret_len; i++)
+				nsd.cookie_secrets[j].cookie_secret[i] = random_generate(256);
+		}
+		// XXX: all we have is a random cookie, still pretend we have one
+		nsd.cookie_count = 1;
+	}
+
 	if (nsd.nsid_len == 0 && nsd.options->nsid) {
 		if (strlen(nsd.options->nsid) % 2 != 0) {
 			error("the NSID must be a hex string of an even length.");
@@ -1274,6 +1399,7 @@ main(int argc, char *argv[])
 
 	nsd.this_child = NULL;
 
+	resolve_interface_names(nsd.options);
 	figure_sockets(&nsd.udp, &nsd.tcp, &nsd.ifs,
 		nsd.options->ip_addresses, NULL, udp_port, tcp_port, &hints);
 
@@ -1443,6 +1569,11 @@ main(int argc, char *argv[])
 	}
 #endif /* HAVE_SSL */
 
+	if(nsd.options->cookie_secret_file && nsd.options->cookie_secret_file[0]
+	   && !cookie_secret_file_read(&nsd) ) {
+		log_msg(LOG_ERR, "cookie secret file corrupt or not readable");
+	}
+
 	/* Unless we're debugging, fork... */
 	if (!nsd.debug) {
 		int fd;
@@ -1597,13 +1728,6 @@ main(int argc, char *argv[])
 	options_zonestatnames_create(nsd.options);
 	server_zonestat_alloc(&nsd);
 #endif /* USE_ZONE_STATS */
-#ifdef USE_DNSTAP
-	if(nsd.options->dnstap_enable) {
-		nsd.dt_collector = dt_collector_create(&nsd);
-		dt_collector_start(nsd.dt_collector, &nsd);
-	}
-#endif /* USE_DNSTAP */
-
 	if(nsd.server_kind == NSD_SERVER_MAIN) {
 		server_prepare_xfrd(&nsd);
 		/* xfrd forks this before reading database, so it does not get
@@ -1611,6 +1735,12 @@ main(int argc, char *argv[])
 		server_start_xfrd(&nsd, 0, 0);
 		/* close zonelistfile in non-xfrd processes */
 		zone_list_close(nsd.options);
+#ifdef USE_DNSTAP
+		if(nsd.options->dnstap_enable) {
+			nsd.dt_collector = dt_collector_create(&nsd);
+			dt_collector_start(nsd.dt_collector, &nsd);
+		}
+#endif /* USE_DNSTAP */
 	}
 	if (server_prepare(&nsd) != 0) {
 		unlinkpid(nsd.pidfile);
