@@ -1732,9 +1732,7 @@ xfrd_send_ixfr_request_udp(xfrd_zone_type* zone)
 	xfrd_setup_packet(xfrd->packet, TYPE_IXFR, CLASS_IN, zone->apex,
 		qid_generate());
 	zone->query_id = ID(xfrd->packet);
-	xfrd_prepare_zone_xfr(zone);
-	assert(xfrd->latest_xfr); /* created by xfrd_prepare_zone_xfr */
-	xfrd->latest_xfr->query_type = TYPE_IXFR;
+	xfrd_prepare_zone_xfr(zone, TYPE_IXFR);
 	DEBUG(DEBUG_XFRD,1, (LOG_INFO, "sent query with ID %d", zone->query_id));
         NSCOUNT_SET(xfrd->packet, 1);
 	xfrd_write_soa_buffer(xfrd->packet, zone->apex, &zone->soa_disk);
@@ -2224,7 +2222,7 @@ xfrd_delete_zone_xfr(xfrd_zone_type *zone, xfrd_xfr_type *xfr)
 }
 
 xfrd_xfr_type *
-xfrd_prepare_zone_xfr(xfrd_zone_type *zone)
+xfrd_prepare_zone_xfr(xfrd_zone_type *zone, uint16_t query_type)
 {
 	xfrd_xfr_type *xfr;
 
@@ -2239,6 +2237,7 @@ xfrd_prepare_zone_xfr(xfrd_zone_type *zone)
 	}
 	tsig_create_record_custom(&xfr->tsig, NULL, 0, 0, 4);
 	zone->latest_xfr = xfr;
+	xfr->query_type = query_type;
 
 	return xfr;
 }
@@ -2285,7 +2284,8 @@ xfrd_handle_received_xfr_packet(xfrd_zone_type* zone, buffer_type* packet)
 					zone->master->ip_address_spec));
 			}
 			if (res == xfrd_packet_notimpl
-				&& zone->query_type == TYPE_IXFR)
+				&& zone->latest_xfr
+				&& zone->latest_xfr->query_type == TYPE_IXFR)
 				return res;
 			else
 				return xfrd_packet_bad;

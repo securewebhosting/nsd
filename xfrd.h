@@ -342,6 +342,13 @@ bound_soa_disk_expire(xfrd_zone_type* zone)
 	return within_expire_bounds(zone, ntohl(zone->soa_disk.expire));
 }
 
+/* return the zone's expire period (from the SOA in use by the running server) */
+static inline time_t
+bound_soa_nsd_expire(xfrd_zone_type* zone)
+{
+	return within_expire_bounds(zone, ntohl(zone->soa_nsd.expire));
+}
+
 extern xfrd_state_type* xfrd;
 
 /* start xfrd, new start. Pass socket to server_main. */
@@ -468,7 +475,7 @@ void xfrd_handle_zone(int fd, short event, void* arg);
 
 const char* xfrd_pretty_time(time_t v);
 
-xfrd_xfr_type *xfrd_prepare_zone_xfr(xfrd_zone_type *zone);
+xfrd_xfr_type *xfrd_prepare_zone_xfr(xfrd_zone_type *zone, uint16_t query_type);
 
 void xfrd_delete_zone_xfr(xfrd_zone_type *zone, xfrd_xfr_type *xfr);
 
